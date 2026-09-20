@@ -1,0 +1,5 @@
+[
+  {"handle": "e1", "date": {"calendar": 0, "dateval": [3, 5, 1944, false], "modifier": 0, "quality": 0, "text": "", "year": 1944}},
+  {"handle": "e2", "date": {"calendar": 0, "dateval": [0, 0, 0, false], "modifier": 0, "quality": 0, "text": "sometime", "year": 0}},
+  {"handle": "e3", "date": {"calendar": 0, "dateval": [0, 0, 0, false], "modifier": 0, "quality": 0, "text": "", "year": 1971}}
+]

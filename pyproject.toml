@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geneanet-drift"
+version = "0.1.0"
+description = "Report a Geneanet tree's recent edits against a Gramps Web tree"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.5",
+]
+
+[project.scripts]
+geneanet-drift = "geneanet_drift.wizard:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+# The change log shows wall-clock times with no zone; they are only compared to each other.
+extend-ignore = ["DTZ001", "DTZ007"]

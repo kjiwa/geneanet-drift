@@ -1,0 +1,7 @@
+# Copy to <data dir>/config.toml. GRAMPS_URL overrides gramps_url.
+# Credentials come only from GRAMPS_USER and GRAMPS_PASSWORD.
+tree = "example"
+gramps_url = "https://gramps.example.org"
+
+# Surnames on the line you share with the tree owner; their clusters sort first.
+priority_surnames = ["Quillon"]

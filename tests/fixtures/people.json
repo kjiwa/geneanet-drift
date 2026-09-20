@@ -1,0 +1,5 @@
+[
+  {"handle": "h1", "gramps_id": "I0001", "primary_name": {"first_name": "Tarik", "surname_list": [{"surname": "Zorvane"}]}, "birth_ref_index": 0, "death_ref_index": 1, "event_ref_list": [{"ref": "e1"}, {"ref": "e2"}]},
+  {"handle": "h2", "gramps_id": "I0002", "primary_name": {"first_name": "Elowen", "surname_list": [{"surname": "Quillon"}]}, "birth_ref_index": -1, "death_ref_index": -1, "event_ref_list": []},
+  {"handle": "h3", "gramps_id": "I0003", "primary_name": {"first_name": "Brannoch", "surname_list": [{"surname": "Harrowmere"}]}, "birth_ref_index": 0, "death_ref_index": -1, "event_ref_list": [{"ref": "e3"}]}
+]
