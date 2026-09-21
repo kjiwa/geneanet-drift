@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from geneanet_drift.config import read_json, write_json
-from geneanet_drift.feed import Entry, format_lifespan, name_key
+from geneanet_drift.feed import Entry, format_lifespan, is_stale, name_key
 from geneanet_drift.gramps import GrampsPerson, Snapshot
 
 # Edits closer together than this are one piece of work.
@@ -50,6 +50,10 @@ class WorkItem:
     @property
     def surname(self) -> str:
         return self.name.split()[-1]
+
+    @property
+    def stale(self) -> bool:
+        return is_stale(self.name)
 
     @property
     def history(self) -> str:
@@ -310,7 +314,10 @@ def _note_shared_claims(clusters: list[Cluster]) -> list[Cluster]:
         ]
         if not taken:
             return resolution
-        return replace(resolution, reason=f"{resolution.reason}; {'; '.join(taken)}")
+        if resolution.item.stale:
+            taken.insert(0, "this row is his old name for a person he has renamed")
+        reason = f"{resolution.reason}; {'; '.join(taken)}"
+        return replace(resolution, reason=reason)
 
     return [
         replace(c, resolutions=tuple(annotate(r) for r in c.resolutions))
