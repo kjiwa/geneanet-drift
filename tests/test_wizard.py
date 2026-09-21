@@ -1,8 +1,10 @@
+from dataclasses import replace
 from datetime import date, datetime
 
 import pytest
 
 from geneanet_drift.config import (
+    ConfigError,
     Run,
     State,
     end_of_day,
@@ -13,7 +15,7 @@ from geneanet_drift.config import (
 )
 from geneanet_drift.gramps import GrampsClient
 from geneanet_drift.match import load_negatives, load_pending
-from geneanet_drift.wizard import finish, run
+from geneanet_drift.wizard import _connect, finish, main, run
 from tests.conftest import FakeGramps, make_client
 
 TODAY = date(2026, 9, 20)
@@ -269,3 +271,69 @@ def test_notices_alone_still_write_a_review_and_record_the_sync(
     assert "Nothing to apply; sync recorded." in script.text
     assert "a picture was added to Marden Quillon" in synced.review_path.read_text()
     assert load_state(synced.state_path).last_sync == NEWEST
+
+
+def secret_script(answer: str = "typed"):
+    prompts: list[str] = []
+
+    def ask_secret(prompt: str) -> str:
+        prompts.append(prompt)
+        return answer
+
+    return ask_secret, prompts
+
+
+def with_password(cfg, password: str | None):
+    return replace(cfg, gramps_password=password)
+
+
+@pytest.fixture
+def on_terminal(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+
+
+def test_connect_prompts_for_an_absent_password(cfg, on_terminal):
+    ask_secret, prompts = secret_script()
+    _connect(with_password(cfg, None), ask_secret)
+    assert len(prompts) == 1
+    assert "password" in prompts[0]
+    assert "reader" in prompts[0]
+
+
+def test_connect_does_not_prompt_when_the_password_is_present(cfg, on_terminal):
+    ask_secret, prompts = secret_script()
+    _connect(with_password(cfg, "given"), ask_secret)
+    assert prompts == []
+
+
+def test_connect_rejects_an_empty_password(cfg, on_terminal):
+    ask_secret, _ = secret_script("")
+    with pytest.raises(ConfigError, match="empty"):
+        _connect(with_password(cfg, None), ask_secret)
+
+
+def test_connect_without_a_user_names_both_places(cfg):
+    ask_secret, _ = secret_script()
+    with pytest.raises(ConfigError, match="gramps_user.*GRAMPS_USER"):
+        _connect(replace(cfg, gramps_user=None), ask_secret)
+
+
+def test_connect_without_a_terminal_raises_instead_of_prompting(cfg, monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
+    ask_secret, prompts = secret_script()
+    with pytest.raises(ConfigError, match="GRAMPS_PASSWORD.*\\.env"):
+        _connect(with_password(cfg, None), ask_secret)
+    assert prompts == []
+
+
+def test_done_needs_no_credentials(tmp_path, monkeypatch, capsys):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "config.toml").write_text(
+        'tree = "example"\ngramps_url = "http://gramps.test"\n'
+    )
+    for variable in ("GRAMPS_USER", "GRAMPS_PASSWORD"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    assert main(["--data-dir", str(data_dir), "--done"]) == 1
+    assert "no finished run" in capsys.readouterr().out.casefold()

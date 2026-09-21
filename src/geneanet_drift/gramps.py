@@ -2,7 +2,7 @@ import base64
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -82,6 +82,10 @@ def urllib_transport(method, url, headers, body):
             return response.status, lowered, response.read()
     except urllib.error.HTTPError as error:
         return error.code, {}, error.read()
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise GrampsError(
+            f"cannot reach {url.split('?')[0]}: {getattr(error, 'reason', error)}"
+        ) from error
 
 
 class GrampsClient:
@@ -99,13 +103,6 @@ class GrampsClient:
         self._transport = transport
         self._token: str | None = None
         self.permissions: frozenset[str] = frozenset()
-
-    @classmethod
-    def from_env(cls, base_url: str, env: Mapping[str, str]) -> "GrampsClient":
-        missing = [v for v in ("GRAMPS_USER", "GRAMPS_PASSWORD") if not env.get(v)]
-        if missing:
-            raise GrampsError(f"set {' and '.join(missing)} in the environment")
-        return cls(base_url, env["GRAMPS_USER"], env["GRAMPS_PASSWORD"])
 
     def _send(
         self, method: str, path: str, headers: dict[str, str], body: bytes | None = None

@@ -1,7 +1,11 @@
-# Copy to <data dir>/config.toml. GRAMPS_URL overrides gramps_url.
-# Credentials come only from GRAMPS_USER and GRAMPS_PASSWORD.
+# Copy to <data dir>/config.toml. GRAMPS_URL and GRAMPS_USER override the keys below.
+# The password is never read from here: set GRAMPS_PASSWORD in the environment or
+# <data dir>/.env, or leave it unset to be prompted.
+
+# The slug in the Geneanet tree URL, without the trailing _w.
 tree = "example"
 gramps_url = "https://gramps.example.org"
+gramps_user = "drift-reader"
 
 # Surnames on the line you share with the tree owner; their clusters sort first.
 priority_surnames = ["Quillon"]

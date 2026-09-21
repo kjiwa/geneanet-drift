@@ -17,6 +17,9 @@ class Config:
     priority_surnames: tuple[str, ...]
     data_dir: Path
     cache_dir: Path
+    gramps_user: str | None = None
+    gramps_password: str | None = field(default=None, repr=False)
+    warnings: tuple[str, ...] = ()
 
     @property
     def state_path(self) -> Path:
@@ -76,6 +79,33 @@ def _xdg(env: Mapping[str, str], variable: str, fallback: str) -> Path:
     return Path(env.get(variable) or Path.home() / fallback)
 
 
+def read_env_file(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.removeprefix("export ").partition("=")
+        if not separator:
+            raise ConfigError(f"{path}:{number}: expected KEY=VALUE")
+        values[key.strip()] = _unquote(value.strip())
+    return values
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def _env_file_warnings(path: Path) -> tuple[str, ...]:
+    if path.is_file() and path.stat().st_mode & 0o077:
+        return (f"{path} is readable by other users; run chmod 600 on it",)
+    return ()
+
+
 def load_config(
     data_dir_arg: str | None,
     env: Mapping[str, str],
@@ -91,6 +121,9 @@ def load_config(
     cache_dir = _xdg(env, "XDG_CACHE_HOME", ".cache") / "geneanet-drift"
     for directory in (data_dir, cache_dir):
         ensure_outside_repo(directory, repo_root)
+
+    env_path = data_dir / ".env"
+    env = {**read_env_file(env_path), **env}
 
     config_path = data_dir / "config.toml"
     if not config_path.is_file():
@@ -109,6 +142,9 @@ def load_config(
         priority_surnames=tuple(raw.get("priority_surnames", [])),
         data_dir=data_dir,
         cache_dir=cache_dir,
+        gramps_user=env.get("GRAMPS_USER") or raw.get("gramps_user"),
+        gramps_password=env.get("GRAMPS_PASSWORD"),
+        warnings=_env_file_warnings(env_path),
     )
 
 

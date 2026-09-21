@@ -1,5 +1,6 @@
 import json
 import threading
+import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -118,11 +119,6 @@ def test_a_token_without_a_permissions_claim_is_an_error():
         take_snapshot(make_client(broken), TITLE)
 
 
-def test_from_env_names_missing_variables():
-    with pytest.raises(GrampsError, match="GRAMPS_USER and GRAMPS_PASSWORD"):
-        GrampsClient.from_env(BASE_URL, {})
-
-
 def test_urllib_transport_over_loopback():
     seen: list[str] = []
 
@@ -152,6 +148,15 @@ def test_urllib_transport_over_loopback():
     assert headers["x-total-count"] == "7"
     assert json.loads(payload)["object_counts"]["people"] == 3
     assert seen == ["/api/metadata/"]
+
+
+def test_an_unreachable_host_is_a_gramps_error(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(gramps.urllib.request, "urlopen", refuse)
+    with pytest.raises(GrampsError, match="cannot reach .*connection refused"):
+        urllib_transport("GET", f"{BASE_URL}/api/metadata/", {}, None)
 
 
 def test_unlinked_tree_has_no_links():

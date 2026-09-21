@@ -85,7 +85,8 @@ def cfg(tmp_path: Path) -> Config:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "config.toml").write_text(
-        f'tree = "example"\ngramps_url = "{BASE_URL}"\npriority_surnames = ["Quillon"]\n'
+        f'tree = "example"\ngramps_url = "{BASE_URL}"\ngramps_user = "reader"\n'
+        'priority_surnames = ["Quillon"]\n'
     )
     env = {"XDG_CACHE_HOME": str(tmp_path / "cache")}
     return load_config(str(data_dir), env, repo_root=tmp_path / "no-repo")

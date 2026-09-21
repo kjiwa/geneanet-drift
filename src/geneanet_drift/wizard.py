@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import os
 import sys
 from collections.abc import Callable
@@ -49,6 +50,7 @@ PREVIEW_ROWS = 3
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
+AskSecret = Callable[[str], str]
 
 
 def _moment(moment: datetime) -> str:
@@ -290,6 +292,24 @@ def finish(cfg: Config, ask: Ask, say: Say) -> int:
     return 0
 
 
+def _connect(cfg: Config, ask_secret: AskSecret) -> GrampsClient:
+    if not cfg.gramps_user:
+        raise ConfigError(
+            "no Gramps user; set `gramps_user` in config.toml or GRAMPS_USER"
+        )
+    password = cfg.gramps_password
+    if not password:
+        if not sys.stdin.isatty():
+            raise ConfigError(
+                "GRAMPS_PASSWORD is not set and there is no terminal to prompt on; "
+                f"set it in the environment or in {cfg.data_dir / '.env'}"
+            )
+        password = ask_secret(f"Gramps password for {cfg.gramps_user}: ")
+        if not password:
+            raise ConfigError("empty Gramps password")
+    return GrampsClient(cfg.gramps_url, cfg.gramps_user, password)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="geneanet-drift",
@@ -311,11 +331,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.data_dir, os.environ)
+        for warning in cfg.warnings:
+            print(f"Warning: {warning}.")
         if args.done:
             return finish(cfg, input, print)
-        client = GrampsClient.from_env(cfg.gramps_url, os.environ)
+        client = _connect(cfg, getpass.getpass)
         today = datetime.now().astimezone().date()
         return run(cfg, client, input, print, today, args.feed, args.since)
-    except (ConfigError, FeedError, GrampsError) as error:
-        print(f"error: {error}", file=sys.stderr)
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    except (ConfigError, FeedError, GrampsError, EOFError) as error:
+        print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 1
