@@ -159,7 +159,11 @@ def test_two_of_his_entries_claiming_one_person_is_flagged():
     assert "I0001 is already matched to his 'Tariq Zorvane'" in (
         by_name["Tariq Vantel.0 Zorvane"].reason
     )
+    assert "his old name for a person he has renamed" in (
+        by_name["Tariq Vantel.0 Zorvane"].reason
+    )
     assert "already matched" not in by_name["Tariq Zorvane"].reason
+    assert "old name" not in by_name["Tariq Zorvane"].reason
 
 
 def test_negative_decision_is_not_reproposed(items, snapshot):

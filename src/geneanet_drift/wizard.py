@@ -42,7 +42,7 @@ from geneanet_drift.match import (
     save_pending,
     work_items,
 )
-from geneanet_drift.review import render, source_title, unticked
+from geneanet_drift.review import compare_target, render, source_title, unticked
 
 DEFAULT_WINDOW = date(2023, 7, 15)
 SELECT_ALL = "Cmd+A" if sys.platform == "darwin" else "Ctrl+A"
@@ -166,7 +166,7 @@ def _describe(resolution: Resolution, position: int, say: Say) -> None:
     item = resolution.item
     lifespan = f"   ({item.lifespan})" if item.lifespan else ""
     say("")
-    say(f"  His tree: {item.name}{lifespan}   {item.url}&lang=en")
+    say(f"  His tree: {item.name}{lifespan}   {compare_target(item)}")
     say(f"  Changes:  {item.history}")
     for number, person in enumerate(resolution.candidates, start=1):
         years = format_lifespan(person.birth_year, person.death_year)
