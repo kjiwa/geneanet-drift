@@ -5,6 +5,7 @@ import pytest
 from geneanet_drift.feed import (
     FeedError,
     format_lifespan,
+    is_stale,
     name_key,
     parse_feed,
     person_url,
@@ -124,6 +125,20 @@ def test_person_url_matches_observed_href_pattern(entries):
     assert (
         named(entries, "Tariq Zorvane").url
         == "https://gw.geneanet.org/example_w?n=zorvane&p=tariq&oc=0"
+    )
+
+
+def test_stale_row_has_no_url_and_linked_row_keeps_its_own(entries):
+    assert named(entries, "Kestrin.0 Vantel").url == ""
+    assert named(entries, "Tariq Zorvane").url != ""
+
+
+def test_only_an_occurrence_suffix_marks_a_name_stale():
+    assert is_stale("Kestrin.0 Vantel") and is_stale("Amaal.12 Mirani")
+    assert not is_stale("Dharamsi Hasmani. Dharamsi")
+    assert not is_stale("Tariq Zorvane")
+    assert person_url("example", "Dharamsi Hasmani. Dharamsi").endswith(
+        "n=dharamsi&p=dharamsi+hasmani.&oc=0"
     )
 
 

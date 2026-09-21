@@ -13,7 +13,6 @@ from geneanet_drift.match import (
 
 CHECKBOX = "[ ] "
 INDENT = "    "
-CITATION_INDENT = INDENT + " " * len("Citation: ")
 ADVICE = {
     "Picture added": "a picture was added to {who}; view it on his page if you want the image",
     "Picture deleted": "a picture was deleted from {who}",
@@ -29,16 +28,35 @@ def source_title(tree: str) -> str:
     return f"Geneanet - {tree} family tree"
 
 
-def _citation_block(tree: str, item: WorkItem, today: date) -> list[str]:
+def _citation_preamble(tree: str) -> list[str]:
     return [
-        f'{INDENT}Citation: Source "{source_title(tree)}"',
-        f'{CITATION_INDENT}page = "{item.name}"   date = {today.isoformat()} (accessed)',
-        f"{CITATION_INDENT}(the name exactly as his change log shows it)",
-        f"{CITATION_INDENT}confidence = Low",
-        f"{CITATION_INDENT}attribute URL = copy the address from the address bar of his page",
-        f"{CITATION_INDENT}attach to: the person (the link read next run),",
-        f"{CITATION_INDENT}also each name, event or relationship imported from his page",
+        f'Every Update and Add below cites Source "{source_title(tree)}":',
+        f"{INDENT}page = the name exactly as his change log shows it (given per item)",
+        f"{INDENT}confidence = Low",
+        f"{INDENT}attribute URL = copy the address from the address bar of his page",
+        f"{INDENT}attach to: the person (the link read next run),",
+        f"{INDENT}also each name, event or relationship imported from his page",
+        "",
     ]
+
+
+def _citation_block(item: WorkItem, today: date) -> list[str]:
+    return [
+        f'{INDENT}Citation: page = "{item.name}"   date = {today.isoformat()} (accessed)'
+    ]
+
+
+def compare_target(item: WorkItem) -> str:
+    if item.url:
+        return f"{item.url}&lang=en"
+    return (
+        "no link in his change log for this row (a stale name); "
+        f"search his tree for surname {item.surname}"
+    )
+
+
+def _compare_line(item: WorkItem) -> str:
+    return f"{INDENT}Compare: {compare_target(item)}"
 
 
 def _note_block(text: str) -> list[str]:
@@ -49,7 +67,7 @@ def _linked_entry(resolution: Resolution) -> list[str]:
     person = resolution.person
     return [
         f"{CHECKBOX}Check {person.name} [{person.gramps_id}]   (his tree: {resolution.item.history})",
-        f"{INDENT}Compare: {resolution.item.url}&lang=en",
+        _compare_line(resolution.item),
     ]
 
 
@@ -58,8 +76,8 @@ def _confirmed_entry(tree: str, resolution: Resolution, today: date) -> list[str
     note = f"Matched to {person.gramps_id} ({person.name}): {resolution.reason}."
     return [
         f"{CHECKBOX}Update {person.name} [{person.gramps_id}]   (his tree: {item.history})",
-        f"{INDENT}Compare: {item.url}&lang=en",
-        *_citation_block(tree, item, today),
+        _compare_line(item),
+        *_citation_block(item, today),
         *_note_block(note),
     ]
 
@@ -68,8 +86,8 @@ def _new_entry(tree: str, resolution: Resolution, today: date) -> list[str]:
     item = resolution.item
     return [
         f"{CHECKBOX}Add person {item.name}   (his tree: {item.history})",
-        f"{INDENT}Compare: {item.url}&lang=en",
-        *_citation_block(tree, item, today),
+        _compare_line(item),
+        *_citation_block(item, today),
         *_note_block(f"Added from the {tree} Geneanet tree; {resolution.reason}."),
     ]
 
@@ -85,19 +103,21 @@ def _entry(tree: str, resolution: Resolution, today: date) -> list[str]:
 def _heading(number: int, cluster: Cluster) -> str:
     tiers = [r.tier for r in cluster.resolutions]
     new = tiers.count(NONE)
+    updates = len(tiers) - new
+    noun = "update" if updates == 1 else "updates"
     where = (
         f"anchored at {cluster.anchor.person.gramps_id} {cluster.anchor.person.name}"
         if cluster.anchor
         else "no anchor"
     )
-    return f"## Cluster {number} - {where}: {new} new, {len(tiers) - new} updates"
+    return f"## Cluster {number} - {where}: {new} new, {updates} {noun}"
 
 
 def _deferred_section(deferred: list[WorkItem]) -> list[str]:
     lines = ["## Deferred (resurfaces next run; nothing to apply)", ""]
     for item in deferred:
         note = f": {item.note}" if item.note else ""
-        lines.append(f"- {item.name}{note}   {item.url}&lang=en")
+        lines.append(f"- {item.name}{note}   {compare_target(item)}")
     return lines
 
 
@@ -126,6 +146,7 @@ def render(
         "",
         f"Tree: {tree}   Changes after: {after.isoformat(sep=' ', timespec='seconds')}",
         "",
+        *_citation_preamble(tree),
     ]
     for number, cluster in enumerate(clusters, start=1):
         lines += [_heading(number, cluster), ""]

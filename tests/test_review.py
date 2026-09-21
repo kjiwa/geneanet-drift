@@ -33,12 +33,27 @@ def test_heading_names_anchor_and_counts(sheet):
 
 def test_new_person_block_carries_the_gramps_ready_citation(sheet):
     block = entry(sheet, "[ ] Add person Marden Quillon")
-    assert 'Citation: Source "Geneanet - example family tree"' in block
     assert 'page = "Marden Quillon"   date = 2026-09-20 (accessed)' in block
-    assert "confidence = Low" in block
-    assert "attribute URL = copy the address from the address bar" in block
-    assert "attribute URL = http" not in block
     assert "Note:     (Person Note)" in block
+    assert "confidence" not in block
+
+
+def test_citation_recipe_is_stated_once(sheet):
+    assert sheet.count(f'cites Source "{TITLE}"') == 1
+    assert sheet.count("confidence = Low") == 1
+    assert sheet.count("attribute URL = copy the address from the address bar") == 1
+    assert "attribute URL = http" not in sheet
+
+
+def test_stale_item_renders_no_compare_url(client, feed_text):
+    snapshot = take_snapshot(client, TITLE)
+    everything = parse_feed(feed_text, "example")
+    clusters = build_clusters(work_items(everything), snapshot, set(), {}, ())
+    text = render("example", clusters, [], [], TODAY, CURSOR)
+    stale = [line for line in text.splitlines() if "no link in his change log" in line]
+    assert len(stale) == 1
+    assert stale[0].startswith("    Compare: ")
+    assert "&p=kestrin" not in text
 
 
 def test_confirmed_match_names_the_person_and_reason(sheet):

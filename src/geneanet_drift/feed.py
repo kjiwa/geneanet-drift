@@ -9,6 +9,7 @@ DATE_LINE = re.compile(r"^[A-Z][a-z]+ \d{1,2}, \d{4}$")
 TIME_LINE = re.compile(r"^\d\d:\d\d:\d\d$")
 LIFESPAN_LINE = re.compile(r"^(?=.*\d)(\d{4})?\s*-\s*(\d{4})?$")
 CHANGE_LINE = re.compile(r"^.+ (added|updated|deleted)$")
+OCCURRENCE = re.compile(r"\.\d+$")
 # A whole-page paste ends with Geneweb's legal notice after the last row.
 FOOTER_LINE = re.compile(
     r"^[\d\s.]+$|^The Geneanet family trees are powered by Geneweb"
@@ -67,6 +68,12 @@ def person_url(tree: str, name: str) -> str:
 
 def name_key(name: str) -> str:
     return " ".join(name.casefold().split())
+
+
+def is_stale(name: str) -> bool:
+    # Geneweb prints the raw key (`given.occ surname`) unlinked when a history
+    # row's person has since been renamed, so no page exists to link to.
+    return any(OCCURRENCE.search(token) for token in name.split())
 
 
 def format_lifespan(birth: int | None, death: int | None) -> str:
@@ -150,9 +157,8 @@ def _parse_record(record: list[Line], tree: str) -> Entry:
         raise FeedError(f"line {record[0][0]}: record has no person")
     person, lifespan, change, admin = _split_body(body)
     birth, death = _parse_lifespan(lifespan[1]) if lifespan else (None, None)
-    return Entry(
-        when, person[1], birth, death, change[1], admin, person_url(tree, person[1])
-    )
+    url = "" if is_stale(person[1]) else person_url(tree, person[1])
+    return Entry(when, person[1], birth, death, change[1], admin, url)
 
 
 def _check_newest_first(entries: list[Entry], numbers: list[int]) -> None:
