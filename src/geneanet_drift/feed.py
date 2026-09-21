@@ -9,7 +9,10 @@ DATE_LINE = re.compile(r"^[A-Z][a-z]+ \d{1,2}, \d{4}$")
 TIME_LINE = re.compile(r"^\d\d:\d\d:\d\d$")
 LIFESPAN_LINE = re.compile(r"^(?=.*\d)(\d{4})?\s*-\s*(\d{4})?$")
 CHANGE_LINE = re.compile(r"^.+ (added|updated|deleted)$")
-FOOTER_LINE = re.compile(r"^[\d\s.]+$")
+# A whole-page paste ends with Geneweb's legal notice after the last row.
+FOOTER_LINE = re.compile(
+    r"^[\d\s.]+$|^The Geneanet family trees are powered by Geneweb"
+)
 KNOWN_CHANGES = frozenset(
     {
         "Individual added",

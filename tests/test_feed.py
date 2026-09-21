@@ -93,6 +93,18 @@ def test_pagination_footer_is_cut(feed_text):
     assert parse_feed(inline, "example")[-1].admin == "adminone"
 
 
+def test_whole_page_chrome_is_ignored(feed_text):
+    header = "Example\n\nMenu\nFamily Tree\n    Search\n\nData entry history\n"
+    footer = (
+        "The Geneanet family trees are powered by Geneweb 7.0. In accordance with "
+        "the legal provisions, you can ask for the removal of your name.\n"
+        "Geneanet\n\n    Geneastar\n\nLanguage\nFOLLOW US\nPrivacy Policy\n"
+    )
+    page = parse_feed(header + feed_text.rstrip() + "\n" + footer, "example")
+    assert page == parse_feed(feed_text, "example")
+    assert page[-1].admin == "adminone"
+
+
 def test_future_last_sync_filters_everything(entries):
     assert since(entries, datetime(2026, 8, 25, 16, 10, 3)) == []
     assert since(entries, datetime(2099, 1, 1)) == []
