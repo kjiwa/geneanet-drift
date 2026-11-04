@@ -331,3 +331,11 @@ test("pageState reports what the popup says about the active tab", () => {
   assert.equal(at(`${base}/history/editing`, { state: "empty", kind: "history" }).state, "empty");
   assert.equal(at(`${base}?m=LIST_IND&pg=1`, null).state, "unsaved");
 });
+
+test("savedAsExpected compares the final path, not the requested name", () => {
+  const file = "geneanet-drift/exampletree/pages/person-6.html";
+  assert.equal(capture.savedAsExpected(`/Users/someone/Downloads/${file}`, file), true);
+  assert.equal(capture.savedAsExpected(`C:\\Users\\someone\\Downloads\\${file.replace(/\//g, "\\")}`, file), true);
+  assert.equal(capture.savedAsExpected("/Users/someone/Downloads/download.html", file), false);
+  assert.equal(capture.baseName("/Users/someone/Downloads/download.html"), "download.html");
+});
