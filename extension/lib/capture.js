@@ -197,6 +197,53 @@ const capture = (() => {
     return hash.toString(16).padStart(8, "0");
   }
 
+  // End offset of the JSON object starting at `start`, or -1; braces inside strings do not count.
+  function objectEnd(text, start) {
+    let depth = 0;
+    let inString = false;
+    for (let index = start; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (char === "\\") {
+          index++;
+        } else if (char === '"') {
+          inString = false;
+        }
+      } else if (char === '"') {
+        inString = true;
+      } else if (char === "{") {
+        depth++;
+      } else if (char === "}" && --depth === 0) {
+        return index + 1;
+      }
+    }
+    return -1;
+  }
+
+  // The media list sits inside a larger page configuration object, so pick out the items themselves.
+  function mediaObjects(script) {
+    const items = [];
+    let at = script.indexOf("{");
+    while (at !== -1) {
+      const end = objectEnd(script, at);
+      let item = null;
+      if (end !== -1) {
+        try {
+          item = JSON.parse(script.slice(at, end));
+        } catch {
+          item = null;
+        }
+      }
+      if (item && item.doc_images) {
+        items.push(item);
+        at = script.indexOf("{", end);
+      } else {
+        at = script.indexOf("{", at + 1);
+      }
+    }
+    return items;
+  }
+
   function mediaFromJson(html) {
     const script = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
       .map((match) => match[1])
@@ -204,15 +251,17 @@ const capture = (() => {
     if (script === undefined) {
       return [];
     }
-    const items = JSON.parse(script.slice(script.indexOf("["), script.lastIndexOf("]") + 1));
     const https = (url) => (String(url).startsWith("//") ? `https:${url}` : url);
-    return items.map((item) => ({
-      docId: item.doc_id,
-      title: item.doc_title,
-      date: item.doc_date,
-      original: https(item.doc_images.original),
-      thumbnail: https(item.doc_images.thumbnail),
-    }));
+    const seen = new Set();
+    return mediaObjects(script)
+      .map((item) => ({
+        docId: item.doc_id,
+        title: item.doc_title,
+        date: item.doc_date,
+        original: https(item.doc_images.original),
+        thumbnail: https(item.doc_images.thumbnail),
+      }))
+      .filter((item) => !seen.has(item.original) && seen.add(item.original));
   }
 
   function safeMedia(html) {
