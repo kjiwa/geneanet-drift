@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>geneanet-drift options</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="ui.css">
+<script src="lib/capture.js" defer></script>
+<script src="options.js" defer></script>
+</head>
+<body>
+<main class="page">
+  <h1>geneanet-drift options</h1>
+  <form id="form" novalidate>
+    <div class="field">
+      <label for="tree">Tree name</label>
+      <input id="tree" name="tree" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+        aria-describedby="tree-help tree-error">
+      <p id="tree-help" class="muted">The part of the tree's address before <code>_w</code>, for example <code>exampletree</code> from https://gw.geneanet.org/exampletree_w.</p>
+      <p id="tree-error" class="error" hidden></p>
+    </div>
+    <div class="field">
+      <label for="last-sync">Last review date (optional)</label>
+      <input id="last-sync" name="last-sync" type="date" aria-describedby="last-sync-help">
+      <p id="last-sync-help" class="muted">People edited after this date are listed first under To visit.</p>
+    </div>
+    <div class="actions">
+      <button id="save" class="button" data-variant="primary" type="submit">Save</button>
+    </div>
+    <p id="saved" class="status" role="status" hidden></p>
+  </form>
+  <section id="access" aria-labelledby="access-heading" hidden>
+    <h2 id="access-heading">Access to Geneanet</h2>
+    <p>The browser has not yet allowed this extension to read gw.geneanet.org pages, so nothing is saved.</p>
+    <button id="grant" class="button" type="button">Grant access</button>
+  </section>
+</main>
+</body>
+</html>

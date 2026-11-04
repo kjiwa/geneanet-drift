@@ -1,0 +1,164 @@
+html {
+  background: var(--surface);
+  color: var(--text);
+  font: var(--text-base) / var(--leading) var(--font);
+}
+
+body {
+  margin: 0;
+  font: inherit;
+}
+
+.page {
+  box-sizing: border-box;
+  max-width: 36rem;
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+body.popup {
+  min-width: 20rem;
+  max-width: 26rem;
+}
+
+body.popup .page {
+  max-width: none;
+}
+
+h1 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+}
+
+h2 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-base);
+}
+
+p {
+  margin: var(--space-2) 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--target);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button[data-variant="primary"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-block: var(--space-4);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--target);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+
+.field input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.field .error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+
+.field .muted {
+  margin: 0;
+}
+
+.status {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.status[data-kind="error"] {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.stat {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.list {
+  margin: var(--space-2) 0;
+  padding: 0 0 0 var(--space-5);
+}
+
+.list li {
+  padding-left: var(--space-1);
+}
+
+.list a {
+  display: flex;
+  align-items: center;
+  min-height: var(--target);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
