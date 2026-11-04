@@ -334,8 +334,8 @@ test("pageState reports what the popup says about the active tab", () => {
 
 test("savedAsExpected compares the final path, not the requested name", () => {
   const file = "geneanet-drift/exampletree/pages/person-6.html";
-  assert.equal(capture.savedAsExpected(`/Users/someone/Downloads/${file}`, file), true);
-  assert.equal(capture.savedAsExpected(`C:\\Users\\someone\\Downloads\\${file.replace(/\//g, "\\")}`, file), true);
-  assert.equal(capture.savedAsExpected("/Users/someone/Downloads/download.html", file), false);
-  assert.equal(capture.baseName("/Users/someone/Downloads/download.html"), "download.html");
+  assert.equal(capture.savedAsExpected(`/mnt/saved/${file}`, file), true);
+  assert.equal(capture.savedAsExpected(`D:\\saved\\${file.replace(/\//g, "\\")}`, file), true);
+  assert.equal(capture.savedAsExpected("/mnt/saved/download.html", file), false);
+  assert.equal(capture.baseName("/mnt/saved/download.html"), "download.html");
 });
