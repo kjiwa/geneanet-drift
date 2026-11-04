@@ -170,7 +170,7 @@ const capture = (() => {
     const rows = html.split("<gw-history-editing-entry").slice(1);
     const entries = [];
     for (const row of rows) {
-      const stamp = row.match(/<b[^>]*>([^<]*)<\/b><div[^>]*>([^<]*)<\/div>/);
+      const stamp = row.match(/<b[^>]*>([^<]*)<\/b>\s*<div[^>]*>([^<]*)<\/div>/);
       const link = linkOf((row.match(/\shref="([^"]*)"/) || [])[1] || "");
       const at = stamp ? historyTime(stamp[1].trim(), stamp[2].trim()) : null;
       if (link !== null && at !== null) {

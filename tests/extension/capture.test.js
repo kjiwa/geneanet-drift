@@ -339,3 +339,8 @@ test("savedAsExpected compares the final path, not the requested name", () => {
   assert.equal(capture.savedAsExpected("/mnt/saved/download.html", file), false);
   assert.equal(capture.baseName("/mnt/saved/download.html"), "download.html");
 });
+
+test("historyEntries reads rows whose time sits on its own line and skips rows with no person link", () => {
+  const entries = capture.historyEntries(read("history_editing"));
+  assert.deepEqual(entries.map((entry) => entry.p), ["june", "pip", "sam"]);
+});
