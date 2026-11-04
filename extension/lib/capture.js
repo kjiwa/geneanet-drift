@@ -423,7 +423,18 @@ const capture = (() => {
     return `${ROOT}/${tree}/media/person-${key}/${stem}.${extensionOf(item.original)}`;
   }
 
+  // Another extension can rename a download after it was requested, so check the final path.
+  function savedAsExpected(actualPath, file) {
+    return String(actualPath).replace(/\\/g, "/").endsWith(`/${file}`);
+  }
+
+  function baseName(path) {
+    return String(path).split(/[\\/]/).pop();
+  }
+
   return {
+    savedAsExpected,
+    baseName,
     normalizeTree,
     isValidTree,
     personUrl,

@@ -56,6 +56,14 @@ async function grant() {
   await showAccess();
 }
 
+async function reset() {
+  await api.storage.local.set({ captures: {}, status: null });
+  const done = document.getElementById("reset-done");
+  done.textContent = "The list of saved pages is cleared. Your tree name and review date are unchanged.";
+  done.hidden = false;
+}
+
 form.addEventListener("submit", save);
+document.getElementById("reset").addEventListener("click", reset);
 document.getElementById("grant").addEventListener("click", grant);
 load();
