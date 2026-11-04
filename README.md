@@ -10,9 +10,11 @@ want to fold the changes back in by hand.
   requests only. Give it a Gramps user with no write permissions that can still
   view private records (`ViewPrivate`); it refuses a user that cannot, because
   the snapshot would silently omit those people.
-- It never contacts Geneanet. Geneanet's terms prohibit automatic access, so you
-  copy the change-log page by hand; the wizard prints each step and echoes what
-  it parsed before trusting it.
+- The Python tool never contacts Geneanet. Geneanet's terms prohibit automatic
+  access, so you copy the change-log page by hand; the wizard prints each step
+  and echoes what it parsed before trusting it. The optional browser extension
+  (below) only saves pages you open yourself; it never requests, navigates or
+  clicks anything.
 - It produces a review sheet: per cluster of related edits, with Gramps-ready
   Citation and Note blocks. You apply them in Gramps Desktop or Web.
 
@@ -24,6 +26,25 @@ timestamp live in the private data directory.
 ## Install
 
 `uv tool install .` or `pip install .`; everything below is identical either way.
+
+## Browser extension
+
+`extension/` saves the Geneanet tree pages you open (person pages, the list of
+all individuals and the data entry history) to
+`Downloads/geneanet-drift/<tree>/pages/`, so you can reconcile a whole tree
+without exporting it. It works in Chrome and Firefox from one manifest and has
+no build step.
+
+- Chrome: open `chrome://extensions`, enable Developer mode, choose Load
+  unpacked and select `extension/`.
+- Firefox: open `about:debugging#/runtime/this-firefox` and choose Load
+  Temporary Add-on, then select `extension/manifest.json`. The add-on is
+  removed when Firefox restarts; the saved pages are not.
+
+Open the extension's Options, enter the tree name, and on Firefox choose Grant
+access. Then browse: each person page you open is saved, and the popup lists
+the people you have not opened yet. Pages are only saved while a tree name is
+set. Edit forms are never saved.
 
 ## Configure
 
@@ -91,4 +112,6 @@ tool writes.
 
 ## Contributing
 
-`uv run --extra dev pytest` and `uv run --extra dev ruff check .`.
+`uv run --extra dev pytest` and `uv run --extra dev ruff check .`. For the
+extension, `node --test "tests/extension/*.test.js"` and
+`npx --yes addons-linter@10.14.0 extension`.

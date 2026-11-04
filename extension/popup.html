@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>geneanet-drift</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="ui.css">
+<script src="lib/capture.js" defer></script>
+<script src="popup.js" defer></script>
+</head>
+<body class="popup">
+<main class="page">
+  <h1>geneanet-drift</h1>
+  <section aria-labelledby="page-heading">
+    <h2 id="page-heading">This page</h2>
+    <p id="page" class="status" role="status">Checking this page.</p>
+  </section>
+  <section aria-labelledby="saved-heading">
+    <h2 id="saved-heading">Saved people</h2>
+    <p id="saved" class="stat"></p>
+    <p id="saved-note" class="muted"></p>
+  </section>
+  <section aria-labelledby="visit-heading">
+    <h2 id="visit-heading">To visit</h2>
+    <p id="visit-note" class="muted"></p>
+    <ol id="visit-list" class="list"></ol>
+    <button id="show-all" class="button" type="button" aria-expanded="false" hidden></button>
+  </section>
+  <section id="media" aria-labelledby="media-heading" hidden>
+    <h2 id="media-heading">Photos on this page</h2>
+    <button id="save-media" class="button" data-variant="primary" type="button"></button>
+    <p id="media-progress" class="muted" role="status"></p>
+    <ul id="media-failures" class="list"></ul>
+  </section>
+  <p><a id="options" href="options.html" target="_blank" rel="noopener">Options</a></p>
+</main>
+</body>
+</html>

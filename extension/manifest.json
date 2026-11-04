@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "geneanet-drift",
+  "version": "0.1.0",
+  "description": "Saves the Geneanet tree pages you open so geneanet-drift can compare them with Gramps.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "geneanet-drift",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "minimum_chrome_version": "121",
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://gw.geneanet.org/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "lib/capture.js",
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gw.geneanet.org/*"
+      ],
+      "js": [
+        "lib/capture.js",
+        "content/page.js"
+      ]
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "geneanet-drift@geneanet-drift.invalid",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}
