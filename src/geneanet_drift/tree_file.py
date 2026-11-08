@@ -14,19 +14,26 @@ from geneanet_drift.gramps import (
     GrampsTree,
 )
 
-FORMAT = 1
+FORMAT = 2
 
 
 def _date(raw: dict | None) -> GrampsDate | None:
     return GrampsDate(**raw) if raw else None
 
 
-def _event(raw: dict) -> GrampsEvent:
-    return GrampsEvent(**{**raw, "date": _date(raw["date"])})
-
-
 def _citation(raw: dict) -> GrampsCitation:
     return GrampsCitation(**{**raw, "date": _date(raw["date"])})
+
+
+def _event(raw: dict) -> GrampsEvent:
+    return GrampsEvent(
+        **{
+            **raw,
+            "date": _date(raw["date"]),
+            "notes": tuple(GrampsNote(**n) for n in raw["notes"]),
+            "citations": tuple(_citation(c) for c in raw["citations"]),
+        }
+    )
 
 
 def _family(raw: dict) -> GrampsFamily:

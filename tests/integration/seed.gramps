@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE database PUBLIC "-//Gramps//DTD Gramps XML 1.7.2//EN" "http://gramps-project.org/xml/1.7.2/grampsxml.dtd">
+<database xmlns="http://gramps-project.org/xml/1.7.2/">
+  <header>
+    <created date="2026-01-01" version="6.0.0"/>
+    <researcher>
+      <resname>Integration Seed</resname>
+    </researcher>
+  </header>
+  <events>
+    <event handle="seedevent01" change="1700000000" id="E0001">
+      <type>Birth</type>
+      <dateval val="1901-03-14"/>
+      <place hlink="seedplace01"/>
+      <description>Born at the mill</description>
+      <noteref hlink="seednote02"/>
+      <citationref hlink="seedcite01"/>
+    </event>
+    <event handle="seedevent02" change="1700000000" id="E0002">
+      <type>Death</type>
+      <dateval val="1970" type="about"/>
+      <place hlink="seedplace02"/>
+    </event>
+    <event handle="seedevent03" change="1700000000" id="E0003">
+      <type>Birth</type>
+      <dateval val="1905" type="before"/>
+      <place hlink="seedplace02"/>
+    </event>
+    <event handle="seedevent04" change="1700000000" id="E0004">
+      <type>Birth</type>
+      <daterange start="1930" stop="1931"/>
+      <place hlink="seedplace01"/>
+    </event>
+    <event handle="seedevent05" change="1700000000" id="E0005">
+      <type>Marriage</type>
+      <dateval val="1928-06" quality="estimated"/>
+      <place hlink="seedplace03"/>
+      <description>Wedding in the chapel</description>
+    </event>
+    <event handle="seedevent06" change="1700000000" id="E0006">
+      <type>Baptism</type>
+      <datespan start="1901-04-01" stop="1901-04-30"/>
+    </event>
+    <event handle="seedevent07" change="1700000000" id="E0007">
+      <type>Birth</type>
+      <dateval val="1933-11-02"/>
+    </event>
+  </events>
+  <people>
+    <person handle="seedperson01" change="1700000000" id="I0001">
+      <gender>M</gender>
+      <name type="Birth Name">
+        <first>Ardeth</first>
+        <surname>Pellow</surname>
+      </name>
+      <eventref hlink="seedevent01" role="Primary"/>
+      <eventref hlink="seedevent02" role="Primary"/>
+      <eventref hlink="seedevent06" role="Primary"/>
+      <objref hlink="seedmedia01"/>
+      <parentin hlink="seedfamily01"/>
+      <noteref hlink="seednote01"/>
+      <citationref hlink="seedcite02"/>
+    </person>
+    <person handle="seedperson02" change="1700000000" id="I0002">
+      <gender>F</gender>
+      <name type="Birth Name">
+        <first>Maren</first>
+        <surname>Voss</surname>
+      </name>
+      <eventref hlink="seedevent03" role="Primary"/>
+      <parentin hlink="seedfamily01"/>
+    </person>
+    <person handle="seedperson03" change="1700000000" id="I0003">
+      <gender>M</gender>
+      <name type="Birth Name">
+        <first>Tobin</first>
+        <surname>Pellow</surname>
+        <nick>Toby</nick>
+      </name>
+      <name alt="1" type="Also Known As">
+        <first>Tobias</first>
+        <surname>Pellowe</surname>
+      </name>
+      <eventref hlink="seedevent04" role="Primary"/>
+      <eventref hlink="seedevent02" role="Witness"/>
+      <childof hlink="seedfamily01"/>
+    </person>
+    <person handle="seedperson04" change="1700000000" id="I0004">
+      <gender>F</gender>
+      <name type="Birth Name">
+        <first>Isolde</first>
+        <surname>Pellow</surname>
+      </name>
+      <eventref hlink="seedevent07" role="Primary"/>
+      <childof hlink="seedfamily01"/>
+    </person>
+    <person handle="seedperson05" change="1700000000" id="I0005">
+      <gender>U</gender>
+      <name type="Birth Name">
+        <first>Quill</first>
+        <surname>Hartnoll</surname>
+      </name>
+    </person>
+  </people>
+  <families>
+    <family handle="seedfamily01" change="1700000000" id="F0001">
+      <rel type="Married"/>
+      <father hlink="seedperson01"/>
+      <mother hlink="seedperson02"/>
+      <eventref hlink="seedevent05" role="Family"/>
+      <childref hlink="seedperson03"/>
+      <childref hlink="seedperson04" mrel="Adopted"/>
+      <noteref hlink="seednote03"/>
+    </family>
+  </families>
+  <sources>
+    <source handle="seedsource01" change="1700000000" id="S0001">
+      <stitle>Parish register of Brindle Hollow</stitle>
+    </source>
+    <source handle="seedsource02" change="1700000000" id="S0002">
+      <stitle>Geneanet - example family tree</stitle>
+    </source>
+  </sources>
+  <citations>
+    <citation handle="seedcite01" change="1700000000" id="C0001">
+      <dateval val="1901-04-02"/>
+      <page>folio 12</page>
+      <sourceref hlink="seedsource01"/>
+    </citation>
+    <citation handle="seedcite02" change="1700000000" id="C0002">
+      <page>Ardeth.0 Pellow</page>
+      <sourceref hlink="seedsource02"/>
+    </citation>
+  </citations>
+  <places>
+    <placeobj handle="seedplace01" change="1700000000" id="P0001" type="City">
+      <ptitle>Brindle Hollow, Marrow County, Eastmere</ptitle>
+      <pname value="Brindle Hollow"/>
+      <placeref hlink="seedplace02"/>
+    </placeobj>
+    <placeobj handle="seedplace02" change="1700000000" id="P0002" type="County">
+      <ptitle>Marrow County, Eastmere</ptitle>
+      <pname value="Marrow County"/>
+      <placeref hlink="seedplace04"/>
+    </placeobj>
+    <placeobj handle="seedplace03" change="1700000000" id="P0003" type="Building">
+      <ptitle>Saint Orsolya Chapel, Brindle Hollow</ptitle>
+      <pname value="Saint Orsolya Chapel"/>
+      <placeref hlink="seedplace01"/>
+    </placeobj>
+    <placeobj handle="seedplace04" change="1700000000" id="P0004" type="Country">
+      <ptitle>Eastmere</ptitle>
+      <pname value="Eastmere"/>
+    </placeobj>
+  </places>
+  <objects>
+    <object handle="seedmedia01" change="1700000000" id="O0001">
+      <file src="portrait.jpg" mime="image/jpeg" checksum="d41d8cd98f00b204e9800998ecf8427e" description="Portrait of Ardeth"/>
+    </object>
+  </objects>
+  <notes>
+    <note handle="seednote01" change="1700000000" id="N0001" type="Person Note">
+      <text>Ran the mill until the flood.</text>
+    </note>
+    <note handle="seednote02" change="1700000000" id="N0002" type="Event Note">
+      <text>Birth date taken from the family bible.</text>
+    </note>
+    <note handle="seednote03" change="1700000000" id="N0003" type="Family Note">
+      <text>Second child joined the family by adoption.</text>
+    </note>
+  </notes>
+</database>

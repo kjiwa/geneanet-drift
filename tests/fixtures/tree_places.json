@@ -1,3 +1,5 @@
 [
-  {"handle": "pl1", "gramps_id": "P0101", "name": {"value": "Ardmoor"}}
+  {"handle": "pl1", "gramps_id": "P0101", "name": {"value": "Ardmoor"}, "place_type": "Town", "placeref_list": [{"ref": "pl2"}]},
+  {"handle": "pl2", "gramps_id": "P0102", "name": {"value": "Fenwick"}, "place_type": "County", "placeref_list": [{"ref": "pl3"}]},
+  {"handle": "pl3", "gramps_id": "P0103", "name": {"value": "Eastmere"}, "place_type": "Country", "placeref_list": []}
 ]
