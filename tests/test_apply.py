@@ -589,16 +589,15 @@ def test_write_credentials_follow_the_read_precedence(tmp_path):
     (data / "config.toml").write_text(
         'tree = "t"\ngramps_url = "http://g.test"\ngramps_write_user = "from-toml"\n'
     )
-    env = {"XDG_CACHE_HOME": str(tmp_path / "c")}
-    cfg = load_config(str(data), env, repo_root=tmp_path / "none")
+    cfg = load_config(str(data), {}, repo_root=tmp_path / "none")
     assert (cfg.gramps_write_user, cfg.gramps_write_password) == ("from-toml", None)
     (data / ".env").write_text(
         "GRAMPS_WRITE_USER=from-file\nGRAMPS_WRITE_PASSWORD=pw\n"
     )
-    cfg = load_config(str(data), env, repo_root=tmp_path / "none")
+    cfg = load_config(str(data), {}, repo_root=tmp_path / "none")
     assert (cfg.gramps_write_user, cfg.gramps_write_password) == ("from-file", "pw")
     cfg = load_config(
-        str(data), {**env, "GRAMPS_WRITE_USER": "from-env"}, repo_root=tmp_path / "none"
+        str(data), {"GRAMPS_WRITE_USER": "from-env"}, repo_root=tmp_path / "none"
     )
     assert cfg.gramps_write_user == "from-env"
     assert "pw" not in repr(cfg)

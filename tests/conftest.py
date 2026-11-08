@@ -109,5 +109,4 @@ def cfg(tmp_path: Path) -> Config:
         f'tree = "example"\ngramps_url = "{BASE_URL}"\ngramps_user = "reader"\n'
         'priority_surnames = ["Quillon"]\n'
     )
-    env = {"XDG_CACHE_HOME": str(tmp_path / "cache")}
-    return load_config(str(data_dir), env, repo_root=tmp_path / "no-repo")
+    return load_config(str(data_dir), {}, repo_root=tmp_path / "no-repo")

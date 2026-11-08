@@ -15,18 +15,6 @@ OCCURRENCE = re.compile(r"\.\d+$")
 FOOTER_LINE = re.compile(
     r"^[\d\s.]+$|^The Geneanet family trees are powered by Geneweb"
 )
-KNOWN_CHANGES = frozenset(
-    {
-        "Individual added",
-        "Individual updated",
-        "Individual deleted",
-        "Family added",
-        "Family updated",
-        "Parents added",
-        "Picture added",
-        "Picture deleted",
-    }
-)
 MAX_REPORTED = 3
 HISTORY_ROW = "gw-history-editing-entry"
 
@@ -47,10 +35,6 @@ class Entry:
     admin: str
     url: str
     address: tuple[str, str, str] | None = None  # (n, p, oc) of the row link
-
-    @property
-    def known(self) -> bool:
-        return self.change in KNOWN_CHANGES
 
 
 def tree_url(tree: str) -> str:
@@ -77,12 +61,6 @@ def is_stale(name: str) -> bool:
     # Geneweb prints the raw key (`given.occ surname`) unlinked when a history
     # row's person has since been renamed, so no page exists to link to.
     return any(OCCURRENCE.search(token) for token in name.split())
-
-
-def format_lifespan(birth: int | None, death: int | None) -> str:
-    if birth is None and death is None:
-        return ""
-    return f"{birth or ''} - {death or ''}".strip()
 
 
 def _raise_if_any(problems: list[str]) -> None:

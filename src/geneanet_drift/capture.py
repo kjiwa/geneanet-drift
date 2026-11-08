@@ -2,6 +2,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import NamedTuple
@@ -652,3 +653,17 @@ def load_tree(pages_dir: Path, tree: str) -> dict[int, Person]:
     }
     _raise_if_any(unresolved)
     return linked
+
+
+def page_times(pages_dir: Path, tree: str) -> dict[Address, datetime]:
+    """When each captured page was last saved, by the address its page names."""
+    times: dict[Address, datetime] = {}
+    for path in _page_paths(pages_dir):
+        try:
+            address = parse_person(path.read_text(encoding="utf-8"), tree).address
+        except (CaptureError, KeyError, TypeError, ValueError):
+            continue
+        saved = datetime.fromtimestamp(path.stat().st_mtime)
+        if address is not None and saved > times.get(address, datetime.min):
+            times[address] = saved
+    return times

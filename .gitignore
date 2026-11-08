@@ -4,13 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Backstop: these belong in the private data dir or the cache dir, never here.
-# Anchored so tests/fixtures/feed.txt stays tracked.
+# Backstop: these belong in the private data dir, never here.
 /config.toml
 /.env
 /state.json
-/run.json
 /negatives.json
-/pending.json
-/feed.txt
-/review.md
+/decisions.json
+/applied.json
