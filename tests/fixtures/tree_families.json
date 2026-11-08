@@ -1,0 +1,5 @@
+[
+  {"handle": "f1", "gramps_id": "F0101", "father_handle": "p2", "mother_handle": "p3", "type": "Married", "child_ref_list": [{"ref": "p1"}], "event_ref_list": []},
+  {"handle": "f2", "gramps_id": "F0102", "father_handle": "p4", "mother_handle": "p1", "type": "Married", "child_ref_list": [], "event_ref_list": [{"ref": "e3"}]},
+  {"handle": "f3", "gramps_id": "F0103", "father_handle": null, "mother_handle": "p1", "type": "Unknown", "child_ref_list": [], "event_ref_list": []}
+]

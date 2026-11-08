@@ -81,6 +81,22 @@ def make_client(transport) -> GrampsClient:
 
 
 @pytest.fixture
+def tree_client(fake_gramps: FakeGramps) -> GrampsClient:
+    for kind in (
+        "people",
+        "families",
+        "events",
+        "places",
+        "notes",
+        "sources",
+        "citations",
+        "media",
+    ):
+        fake_gramps.routes[f"/api/{kind}/"] = load_fixture(f"tree_{kind}.json")
+    return make_client(fake_gramps)
+
+
+@pytest.fixture
 def client(fake_gramps: FakeGramps) -> GrampsClient:
     return make_client(fake_gramps)
 

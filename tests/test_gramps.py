@@ -9,8 +9,10 @@ from geneanet_drift import gramps
 from geneanet_drift.feed import name_key
 from geneanet_drift.gramps import (
     GrampsClient,
+    GrampsDate,
     GrampsError,
     take_snapshot,
+    take_tree,
     urllib_transport,
 )
 from tests.conftest import BASE_URL, FakeGramps, load_fixture, make_client, make_token
@@ -162,3 +164,79 @@ def test_an_unreachable_host_is_a_gramps_error(monkeypatch):
 def test_unlinked_tree_has_no_links():
     client = make_client(FakeGramps(with_links=False))
     assert take_snapshot(client, TITLE).links == {}
+
+
+def test_tree_joins_a_person_to_events_places_notes_citations_and_media(tree_client):
+    tree = take_tree(tree_client)
+    marenka = tree.people[0]
+    assert (marenka.given, marenka.surname, marenka.nickname) == (
+        "Marenka",
+        "Thistledown",
+        "Mari",
+    )
+    assert marenka.gender == "female"
+    assert marenka.other_names == ("Marenka Brindle", "Renka")
+    assert [e.kind for e in marenka.events] == ["Birth", "Death", "Baptism"]
+    assert marenka.events[0].place == "Ardmoor"
+    assert marenka.events[1].place is None
+    assert marenka.events[2].description == "Parish register"
+    assert [n.text for n in marenka.notes] == ["Moved to the coast."]
+    assert (marenka.citations[0].source, marenka.citations[0].page) == (
+        "Parish register of Ardmoor",
+        "folio 12",
+    )
+    assert marenka.citations[0].date == GrampsDate(1921, None, None, None, None, "")
+    assert [(m.description, m.path) for m in marenka.media] == [
+        ("Wedding portrait", "portrait.jpg")
+    ]
+
+
+def test_tree_dates_carry_precision_modifier_and_quality(tree_client):
+    birth, death, baptism = take_tree(tree_client).people[0].events
+    assert birth.date == GrampsDate(1920, 5, 3, None, None, "")
+    assert death.date == GrampsDate(1990, None, None, "about", None, "")
+    assert baptism.date == GrampsDate(1920, None, None, None, None, "")
+    marriage = take_tree(tree_client).families[1].events[0]
+    assert marriage.date == GrampsDate(1945, 6, None, "before", "estimated", "")
+
+
+def test_tree_links_a_person_to_both_families_and_parents(tree_client):
+    tree = take_tree(tree_client)
+    marenka = tree.people[0]
+    assert (marenka.parent_families, marenka.families) == (("f1",), ("f2", "f3"))
+    parents, marriage, partnership = tree.families
+    assert (parents.father, parents.mother, parents.children) == ("p2", "p3", ("p1",))
+    assert (marriage.father, marriage.mother, marriage.kind) == ("p4", "p1", "Married")
+    assert (partnership.father, partnership.kind) == (None, "Unknown")
+
+
+def test_tree_reads_each_object_type_once_and_never_writes(tree_client, fake_gramps):
+    take_tree(tree_client)
+    paths = [path for method, path in fake_gramps.requests if method == "GET"]
+    assert len(paths) == len(set(paths)) == 8
+    assert [m for m, _ in fake_gramps.requests].count("POST") == 1
+
+
+def test_an_undated_event_has_no_date():
+    from geneanet_drift.gramps import _date
+
+    assert _date({"dateval": [0, 0, 0, False], "modifier": 0, "quality": 0}) is None
+
+
+def test_date_ranges_keep_their_end_year_and_short_datevals_do_not_crash():
+    from geneanet_drift.gramps import _date
+
+    span = _date({"dateval": [0, 0, 1900, False, 0, 0, 1910, False], "modifier": 4})
+    assert (span.modifier, span.year, span.end_year) == ("range", 1900, 1910)
+    assert _date({"dateval": [0, 1], "text": "x"}).month == 1
+
+
+def test_events_where_the_person_is_only_a_witness_are_not_theirs():
+    from geneanet_drift.gramps import _events
+
+    events = {"e1": object(), "e2": object()}
+    refs = [
+        {"ref": "e1", "role": "Primary"},
+        {"ref": "e2", "role": {"string": "Witness"}},
+    ]
+    assert _events(refs, events) == (events["e1"],)
