@@ -110,6 +110,73 @@ def test_a_writable_role_is_warned_about_but_allowed():
     assert "EditOwnUser" not in client.role_warnings()[0]
 
 
+class Expiring:
+    """Rejects the first authorised GET with 401, like a token that just expired."""
+
+    def __init__(self, permissions=("ViewPrivate",)):
+        self.permissions = permissions
+        self.mints = 0
+        self.requests = 0
+        self.expire_all = False
+
+    def __call__(self, method, url, headers, body):
+        if "/api/token/" in url:
+            self.mints += 1
+            token = make_token(*self.permissions) + str(self.mints)
+            return 200, {}, json.dumps({"access_token": token}).encode()
+        self.requests += 1
+        stale = self.requests == 1 or self.expire_all
+        if stale:
+            return 401, {}, b"{}"
+        return 200, {}, b'{"ok": true}'
+
+
+def test_a_401_re_mints_the_token_once_and_retries_after_the_rate_limit(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(gramps.time, "sleep", sleeps.append)
+    server = Expiring()
+    client = GrampsClient(BASE_URL, "reader", "secret", transport=server)
+    assert client.get("/api/metadata/")[0] == {"ok": True}
+    assert server.mints == 2
+    assert sleeps and sleeps[0] > 0
+
+
+def test_a_second_401_is_an_error(monkeypatch):
+    monkeypatch.setattr(gramps.time, "sleep", lambda seconds: None)
+    server = Expiring()
+    server.expire_all = True
+    client = GrampsClient(BASE_URL, "reader", "secret", transport=server)
+    with pytest.raises(GrampsError, match="HTTP 401"):
+        client.get("/api/metadata/")
+    assert server.mints == 2
+
+
+def test_the_writer_also_refreshes_its_token(monkeypatch):
+    monkeypatch.setattr(gramps.time, "sleep", lambda seconds: None)
+    server = Expiring(permissions=("AddObject", "EditObject", "DeleteObject"))
+    writer = gramps.GrampsWriter(BASE_URL, "editor", "secret", transport=server)
+    assert writer.post_json("/api/objects/", []) == {"ok": True}
+    assert server.mints == 2
+
+
+def test_the_writer_needs_delete_for_undo_and_says_so():
+    server = Expiring(permissions=("AddObject", "EditObject"))
+    writer = gramps.GrampsWriter(BASE_URL, "editor", "secret", transport=server)
+    with pytest.raises(GrampsError, match="DeleteObject.*undo"):
+        writer.get("/api/metadata/")
+
+
+def test_the_writer_allows_harmless_extra_permissions_but_not_unknown_deletes():
+    base = ("AddObject", "EditObject", "DeleteObject", "ViewOtherUser", "UseChat")
+    ok = Expiring(permissions=base)
+    writer = gramps.GrampsWriter(BASE_URL, "editor", "secret", transport=ok)
+    writer._mint_token()
+    bad = Expiring(permissions=(*base, "DeleteUser"))
+    writer = gramps.GrampsWriter(BASE_URL, "editor", "secret", transport=bad)
+    with pytest.raises(GrampsError, match="DeleteUser"):
+        writer._mint_token()
+
+
 def test_a_read_only_role_has_no_warnings(client):
     take_snapshot(client, TITLE)
     assert client.role_warnings() == []

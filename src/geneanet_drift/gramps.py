@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from urllib.parse import urlencode
 from geneanet_drift.feed import name_key
 
 PAGE_SIZE = 500
+TOKEN_INTERVAL = 1.1  # the token endpoint allows one request per second
 REQUEST_TIMEOUT = 30
 
 Transport = Callable[
@@ -35,6 +37,12 @@ WRITE_PREFIXES = (
 
 class GrampsError(Exception):
     pass
+
+
+class HttpError(GrampsError):
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
 
 
 def _token_permissions(token: str) -> frozenset[str]:
@@ -180,19 +188,39 @@ class GrampsClient:
         self._credentials = {"username": user, "password": password}
         self._transport = transport
         self._token: str | None = None
+        self._minted_at: float | None = None
         self.permissions: frozenset[str] = frozenset()
 
-    def _send(
-        self, method: str, path: str, headers: dict[str, str], body: bytes | None = None
+    def _raw(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+        ok: tuple[int, ...] = (200,),
     ):
         status, response_headers, payload = self._transport(
             method, self._base_url + path, headers, body
         )
-        if status != 200:
-            raise GrampsError(f"{method} {path.split('?')[0]} returned HTTP {status}")
+        if status not in ok:
+            raise HttpError(
+                f"{method} {path.split('?')[0]} returned HTTP {status}", status
+            )
+        return response_headers, payload
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+        ok: tuple[int, ...] = (200,),
+    ):
+        response_headers, payload = self._raw(method, path, headers, body, ok)
         return response_headers, json.loads(payload)
 
     def _mint_token(self) -> str:
+        self._respect_token_interval()
         _, payload = self._send(
             "POST",
             "/api/token/",
@@ -200,14 +228,44 @@ class GrampsClient:
             json.dumps(self._credentials).encode(),
         )
         token = payload["access_token"]
+        self._minted_at = time.monotonic()
         self.permissions = _token_permissions(token)
+        self._check_permissions()
+        return token
+
+    def _respect_token_interval(self) -> None:
+        if self._minted_at is not None:
+            wait = TOKEN_INTERVAL - (time.monotonic() - self._minted_at)
+            if wait > 0:
+                time.sleep(wait)
+
+    def _authorised(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+        ok: tuple[int, ...] = (200,),
+    ):
+        """Sends with the token; a 401 mints a fresh token and retries once."""
+        for attempt in (1, 2):
+            if self._token is None:
+                self._token = self._mint_token()
+            auth = {**headers, "Authorization": f"Bearer {self._token}"}
+            try:
+                return self._raw(method, path, auth, body, ok)
+            except HttpError as error:
+                if error.status != 401 or attempt == 2:
+                    raise
+                self._token = None
+
+    def _check_permissions(self) -> None:
         if PRIVATE_PERMISSION not in self.permissions:
             raise GrampsError(
                 f"user {self._credentials['username']!r} cannot view private records, "
                 "so the snapshot would silently omit them; use a role that has "
                 f"{PRIVATE_PERMISSION} but no write permissions"
             )
-        return token
 
     def role_warnings(self) -> list[str]:
         writes = sorted(
@@ -226,14 +284,14 @@ class GrampsClient:
         ]
 
     def get(self, path: str, **query) -> tuple[object, int | None]:
-        if self._token is None:
-            self._token = self._mint_token()
         suffix = f"?{urlencode(query)}" if query else ""
-        headers, payload = self._send(
-            "GET", path + suffix, {"Authorization": f"Bearer {self._token}"}
-        )
+        headers, payload = self._authorised("GET", path + suffix, {})
         total = headers.get("x-total-count")
-        return payload, int(total) if total is not None else None
+        return json.loads(payload), int(total) if total is not None else None
+
+    def fetch(self, path: str) -> bytes:
+        _, payload = self._authorised("GET", path, {})
+        return payload
 
     def get_all(self, path: str, **query) -> list:
         items: list = []
@@ -472,3 +530,74 @@ def take_tree(client: GrampsClient) -> GrampsTree:
         ),
         tuple(_family(raw, events) for raw in client.get_all("/api/families/")),
     )
+
+
+@dataclass(frozen=True)
+class References:
+    places: dict[str, str]  # name key of the place hierarchy title -> handle
+    sources: dict[str, str]  # source title -> handle
+
+
+def take_references(client: GrampsClient) -> References:
+    places = _by_handle(client, "/api/places/")
+    return References(
+        {name_key(_place_title(h, places)): h for h in places},
+        {
+            source["title"]: source["handle"]
+            for source in client.get_all("/api/sources/", keys="handle,title")
+        },
+    )
+
+
+REQUIRED_WRITE_PERMISSIONS = frozenset({"AddObject", "EditObject", "DeleteObject"})
+# The write permissions of the Editor role. DeleteObject is required because
+# undoing an add deletes the object. Any other permission that writes, deletes,
+# imports or repairs is refused; read-only extras are harmless.
+ALLOWED_WRITE_PERMISSIONS = REQUIRED_WRITE_PERMISSIONS | {
+    OWN_USER,
+    "EditCustomFilter",
+    "EditNameGroup",
+}
+WRITE_STATUSES = (200, 201, 202)
+
+
+class GrampsWriter(GrampsClient):
+    """Writes with a token that has the Editor's write permissions and no more."""
+
+    def _check_permissions(self) -> None:
+        user = self._credentials["username"]
+        missing = REQUIRED_WRITE_PERMISSIONS - self.permissions
+        if missing:
+            raise GrampsError(
+                f"user {user!r} lacks {', '.join(sorted(missing))}; the write user "
+                "needs the Editor role (DeleteObject is needed to undo an add)"
+            )
+        excess = {
+            p
+            for p in self.permissions
+            if p.startswith(WRITE_PREFIXES) and p not in ALLOWED_WRITE_PERMISSIONS
+        }
+        if excess:
+            raise GrampsError(
+                f"user {user!r} holds {', '.join(sorted(excess))}; refusing a role "
+                "broader than Editor"
+            )
+
+    @property
+    def username(self) -> str:
+        return self._credentials["username"]
+
+    def _write(self, method: str, path: str, body: bytes, content_type: str):
+        _, payload = self._authorised(
+            method, path, {"Content-Type": content_type}, body, WRITE_STATUSES
+        )
+        return json.loads(payload)
+
+    def post_json(self, path: str, value: object):
+        return self._write("POST", path, json.dumps(value).encode(), "application/json")
+
+    def put_json(self, path: str, value: object):
+        return self._write("PUT", path, json.dumps(value).encode(), "application/json")
+
+    def post_file(self, path: str, data: bytes, mime: str):
+        return self._write("POST", path, data, mime)
