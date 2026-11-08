@@ -177,7 +177,7 @@ def test_tree_joins_a_person_to_events_places_notes_citations_and_media(tree_cli
     assert marenka.gender == "female"
     assert marenka.other_names == ("Marenka Brindle", "Renka")
     assert [e.kind for e in marenka.events] == ["Birth", "Death", "Baptism"]
-    assert marenka.events[0].place == "Ardmoor"
+    assert marenka.events[0].place == "Ardmoor, Fenwick, Eastmere"
     assert marenka.events[1].place is None
     assert marenka.events[2].description == "Parish register"
     assert [n.text for n in marenka.notes] == ["Moved to the coast."]
@@ -189,6 +189,23 @@ def test_tree_joins_a_person_to_events_places_notes_citations_and_media(tree_cli
     assert [(m.description, m.path) for m in marenka.media] == [
         ("Wedding portrait", "portrait.jpg")
     ]
+
+
+def test_event_notes_and_citations_are_read(tree_client):
+    birth, death, _ = take_tree(tree_client).people[0].events
+    assert [n.text for n in birth.notes] == ["Moved to the coast."]
+    assert [c.page for c in birth.citations] == ["folio 12"]
+    assert (death.notes, death.citations) == ((), ())
+
+
+def test_a_place_cycle_does_not_loop():
+    from geneanet_drift.gramps import _place_title
+
+    places = {
+        "a": {"name": {"value": "A"}, "placeref_list": [{"ref": "b"}]},
+        "b": {"name": {"value": "B"}, "placeref_list": [{"ref": "a"}]},
+    }
+    assert _place_title("a", places) == "A, B"
 
 
 def test_tree_dates_carry_precision_modifier_and_quality(tree_client):
@@ -240,3 +257,14 @@ def test_events_where_the_person_is_only_a_witness_are_not_theirs():
         {"ref": "e2", "role": {"string": "Witness"}},
     ]
     assert _events(refs, events) == (events["e1"],)
+
+
+def test_place_title_skips_unnamed_places():
+    from geneanet_drift.gramps import _place_title
+
+    places = {
+        "a": {"name": {"value": "A"}, "placeref_list": [{"ref": "b"}]},
+        "b": {"name": {"value": ""}, "placeref_list": [{"ref": "c"}]},
+        "c": {"name": {"value": "C"}},
+    }
+    assert _place_title("a", places) == "A, C"

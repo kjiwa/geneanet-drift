@@ -156,8 +156,15 @@ def test_events_map_to_tags_with_killed_as_death_cause():
     text = export_gedcom({1: person(events=events)}, TREE).text
     lines = body(text, "@I1@")
     assert "1 BIRT" in lines and "2 DATE MAR 1900" in lines and "2 PLAC Harbor" in lines
-    assert "1 BURI Y" in lines
+    assert "1 BURI" in lines
     assert "1 DEAT" in lines and "2 CAUS Killed" in lines and "2 DATE 1944" in lines
+
+
+def test_events_without_detail_carry_no_value_because_gramps_keeps_Y_as_text():
+    events = (Event("born", None, None), Event("buried", None, None))
+    lines = body(export_gedcom({1: person(events=events)}, TREE).text, "@I1@")
+    assert "1 BIRT" in lines and "1 BURI" in lines
+    assert not any(line.endswith(" Y") and line.startswith("1 ") for line in lines)
 
 
 def test_killed_after_deceased_is_a_typed_event():

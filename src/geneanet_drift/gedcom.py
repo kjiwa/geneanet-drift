@@ -138,8 +138,7 @@ def _event_lines(event: Event, deceased_emitted: bool) -> list[str]:
         return [_line(1, "EVEN"), _line(2, "TYPE", "Killed"), *detail]
     tag = EVENT_TAGS[event.kind]
     cause = [_line(2, "CAUS", "Killed")] if event.kind == "killed" else []
-    value = "" if detail or cause else "Y"
-    return [_line(1, tag, value), *cause, *detail]
+    return [_line(1, tag), *cause, *detail]
 
 
 def _events_lines(events: tuple[Event, ...]) -> list[str]:

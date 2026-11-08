@@ -86,15 +86,6 @@ class GrampsDate:
 
 
 @dataclass(frozen=True)
-class GrampsEvent:
-    handle: str
-    kind: str
-    date: GrampsDate | None
-    place: str | None
-    description: str
-
-
-@dataclass(frozen=True)
 class GrampsNote:
     handle: str
     text: str
@@ -106,6 +97,17 @@ class GrampsCitation:
     source: str
     page: str
     date: GrampsDate | None
+
+
+@dataclass(frozen=True)
+class GrampsEvent:
+    handle: str
+    kind: str
+    date: GrampsDate | None
+    place: str | None
+    description: str
+    notes: tuple[GrampsNote, ...] = ()
+    citations: tuple[GrampsCitation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -379,14 +381,29 @@ def _events(refs: list[dict], events: dict[str, GrampsEvent]):
     )
 
 
-def _event(raw: dict, places: dict[str, dict]) -> GrampsEvent:
-    place = places[raw["place"]]["name"]["value"] if raw.get("place") else None
+def _place_title(handle: str, places: dict[str, dict]) -> str:
+    """Joins the place name with its parents, nearest first, as Gramps displays it."""
+    names: list[str] = []
+    seen: set[str] = set()
+    while handle in places and handle not in seen:
+        seen.add(handle)
+        place = places[handle]
+        if place["name"].get("value"):
+            names.append(place["name"]["value"])
+        parents = place.get("placeref_list") or []
+        handle = parents[0]["ref"] if parents else ""
+    return ", ".join(names)
+
+
+def _event(raw: dict, places, notes, citations) -> GrampsEvent:
     return GrampsEvent(
         raw["handle"],
         _label(raw.get("type")),
         _date(raw.get("date")),
-        place,
+        _place_title(raw["place"], places) if raw.get("place") else None,
         raw.get("description", ""),
+        tuple(notes[h] for h in raw.get("note_list", [])),
+        tuple(citations[h] for h in raw.get("citation_list", [])),
     )
 
 
@@ -427,9 +444,6 @@ def _full_person(raw: dict, events, notes, citations, media) -> GrampsFullPerson
 def take_tree(client: GrampsClient) -> GrampsTree:
     places = _by_handle(client, "/api/places/")
     sources = _by_handle(client, "/api/sources/")
-    events = {
-        h: _event(raw, places) for h, raw in _by_handle(client, "/api/events/").items()
-    }
     notes = {
         h: GrampsNote(h, _label(raw.get("text")))
         for h, raw in _by_handle(client, "/api/notes/").items()
@@ -442,6 +456,10 @@ def take_tree(client: GrampsClient) -> GrampsTree:
             _date(raw.get("date")),
         )
         for h, raw in _by_handle(client, "/api/citations/").items()
+    }
+    events = {
+        h: _event(raw, places, notes, citations)
+        for h, raw in _by_handle(client, "/api/events/").items()
     }
     media = {
         h: GrampsMedia(h, raw.get("desc", ""), raw.get("path", ""), raw.get("mime", ""))
