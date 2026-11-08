@@ -79,6 +79,18 @@ a {
   color: var(--on-accent);
 }
 
+.button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.button[aria-pressed="true"][data-action="reject"] {
+  border-color: var(--error);
+  background: var(--error);
+  color: var(--surface);
+}
+
 .button:disabled {
   cursor: default;
   opacity: 0.6;
@@ -95,7 +107,9 @@ a {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select,
+.field textarea {
   box-sizing: border-box;
   width: 100%;
   min-height: var(--target);
@@ -107,7 +121,13 @@ a {
   font: inherit;
 }
 
-.field input[aria-invalid="true"] {
+.field textarea {
+  min-height: calc(var(--target) * 2);
+  resize: vertical;
+}
+
+.field input[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
   border-color: var(--error);
 }
 

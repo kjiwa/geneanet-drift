@@ -1,0 +1,422 @@
+"use strict";
+
+const TOKEN = document.querySelector('meta[name="review-token"]').content;
+const GROUPS = [
+  { state: "needs_match", title: "Needs a match", empty: "Every person has a match or is new." },
+  { state: "new", title: "New in his tree", empty: "No one in his tree is missing from Gramps." },
+  { state: "differs", title: "Differs", empty: "No matched person differs from Gramps." },
+  { state: "unchanged", title: "Unchanged", empty: "No matched person is unchanged." },
+];
+const STATUS_LABELS = { accepted: "Accepted", rejected: "Rejected", edited: "Edited" };
+const NOT_REVIEWED = "Not reviewed";
+
+const state = { data: null, query: "", open: {}, editing: new Set(), errors: {} };
+const view = document.getElementById("view");
+
+function h(tag, props = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [name, value] of Object.entries(props)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (name === "class") node.className = value;
+    else if (name === "text") node.textContent = value;
+    else if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+    else node.setAttribute(name, value === true ? "" : value);
+  }
+  node.append(...kids.flat().filter((kid) => kid !== null && kid !== undefined && kid !== false));
+  return node;
+}
+
+function plural(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+async function api(path, body) {
+  const response = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: body ? { "X-Review-Token": TOKEN, "Content-Type": "application/json" } : { "X-Review-Token": TOKEN },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "The request failed.");
+  return payload;
+}
+
+function flash(message) {
+  const node = document.getElementById("flash");
+  node.textContent = message || "";
+  node.hidden = !message;
+}
+
+/* Theme */
+
+function applyTheme(choice) {
+  const root = document.documentElement;
+  if (choice === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", choice);
+  document.querySelector('meta[name="color-scheme"]').content = choice === "system" ? "light dark" : choice;
+  document.querySelector('meta[name="theme-color"]').content = getComputedStyle(root).getPropertyValue("--surface").trim();
+}
+
+function initTheme() {
+  const select = document.getElementById("theme");
+  let saved = "system";
+  try {
+    saved = localStorage.getItem("theme") || "system";
+  } catch (error) {
+    saved = "system";
+  }
+  select.value = saved;
+  applyTheme(saved);
+  select.addEventListener("change", () => {
+    try {
+      localStorage.setItem("theme", select.value);
+    } catch (error) {
+      flash("The theme applies now but could not be saved.");
+    }
+    applyTheme(select.value);
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(select.value));
+}
+
+/* Text marking */
+
+function normalWord(word) {
+  return word.replace(/[,.;:]+$/, "").toLowerCase();
+}
+
+function markedLine(line, others) {
+  const known = new Set(others.flatMap((other) => other.split(/\s+/)).map(normalWord));
+  const parts = line.split(/(\s+)/).map((part) => {
+    if (part === "" || /^\s+$/.test(part) || known.has(normalWord(part))) return part;
+    return h("mark", { text: part });
+  });
+  return h("p", {}, ...parts);
+}
+
+function lines(values, others, emptyText) {
+  if (values.length === 0) return [h("p", { class: "muted", text: emptyText })];
+  return values.map((value) => (others.length ? markedLine(value, others) : h("p", { text: value })));
+}
+
+/* Skeletons */
+
+function skeletonList() {
+  const block = (size) => h("div", { class: "skeleton", "data-size": size });
+  return h("div", { "aria-hidden": "true" },
+    block("title"),
+    h("div", { class: "stats" }, ...[1, 2, 3, 4, 5].map(() => block("card"))),
+    block("bar"),
+    h("div", { class: "skeleton-stack" }, ...[1, 2, 3, 4].map(() => block("bar"))));
+}
+
+function skeletonPerson() {
+  const block = (size) => h("div", { class: "skeleton", "data-size": size });
+  return h("div", { "aria-hidden": "true" },
+    block("bar"), block("title"),
+    h("div", { class: "skeleton-stack" }, block("row"), block("row")));
+}
+
+/* Decisions */
+
+async function mutate(path, body) {
+  const focused = document.activeElement && document.activeElement.dataset.focus;
+  try {
+    flash("");
+    await api(path, body);
+    state.data = await api("/api/changes");
+  } catch (error) {
+    flash(error.message);
+  }
+  render({ keepFocus: focused });
+}
+
+function decide(row, status) {
+  const current = row.decision && row.decision.status;
+  state.editing.delete(row.id);
+  return mutate("/api/decisions", { id: row.id, status: current === status ? "pending" : status });
+}
+
+function saveEdit(row, value) {
+  state.errors[row.id] = null;
+  return api("/api/decisions", { id: row.id, status: "edited", value })
+    .then(() => api("/api/changes"))
+    .then((data) => {
+      state.data = data;
+      state.editing.delete(row.id);
+      render({ keepFocus: `${row.id}:edit` });
+    })
+    .catch((error) => {
+      state.errors[row.id] = error.message;
+      render({ keepFocus: `${row.id}:value` });
+    });
+}
+
+function chooseLink(person, change) {
+  return mutate("/api/link", { person: person.key, change });
+}
+
+/* List view */
+
+function statCard(count, caption) {
+  return h("div", { class: "stat-card" }, h("dt", { text: caption }), h("dd", { class: "stat", text: String(count) }));
+}
+
+function summaryStats(summary) {
+  return h("dl", { class: "stats" },
+    statCard(summary.people, "People captured from his tree"),
+    statCard(summary.needs_match, "People who need a match in Gramps"),
+    statCard(summary.new, "People in his tree and not in Gramps"),
+    statCard(summary.differs, "Matched people who differ from Gramps"),
+    statCard(summary.unchanged, "Matched people with no differences"));
+}
+
+function personMeta(person) {
+  const parts = [];
+  if (person.years) parts.push(person.years);
+  if (person.state === "needs_match") parts.push(plural(person.candidates.length, "possible match", "possible matches"));
+  else if (person.state === "unchanged" && person.mine) parts.push(`Matched to "${person.mine.name}" (${person.mine.id})`);
+  else parts.push(`${plural(person.actionable, "change", "changes")} to review, ${person.decided} decided`);
+  return parts.join(". ");
+}
+
+function personItem(person) {
+  return h("li", {}, h("a", { class: "person-link", href: `#/person/${person.key}` },
+    h("span", { text: person.name }), h("span", { class: "meta", text: personMeta(person) })));
+}
+
+function matchesQuery(person) {
+  const query = state.query.trim().toLowerCase();
+  if (!query) return true;
+  return [person.name, person.mine && person.mine.name].some((name) => name && name.toLowerCase().includes(query));
+}
+
+function groupSection(group, people) {
+  const shown = people.filter(matchesQuery);
+  const count = state.query.trim() ? `${shown.length} of ${plural(people.length, "person", "people")}` : plural(people.length, "person", "people");
+  const open = group.state in state.open ? state.open[group.state] : group.state !== "unchanged" && people.length > 0;
+  const body = shown.length
+    ? h("ul", { class: "people" }, ...shown.map(personItem))
+    : h("p", { class: "muted", text: people.length ? "No one here matches the search." : group.empty });
+  return h("details", { class: "group", open: open, ontoggle: (event) => { state.open[group.state] = event.target.open; } },
+    h("summary", { text: `${group.title} (${count})` }), body);
+}
+
+function groupSections() {
+  const { people } = state.data;
+  return GROUPS.map((group) => groupSection(group, people.filter((p) => p.state === group.state)));
+}
+
+function filterGroups() {
+  document.getElementById("groups").replaceChildren(...groupSections());
+}
+
+function searchField() {
+  let composing = false;
+  const input = h("input", { id: "search", type: "search", value: state.query, autocomplete: "off",
+    oninput: (event) => {
+      state.query = event.target.value;
+      if (!composing) filterGroups();
+    },
+    oncompositionstart: () => { composing = true; },
+    oncompositionend: (event) => {
+      composing = false;
+      state.query = event.target.value;
+      filterGroups();
+    } });
+  return h("div", { class: "field search" }, h("label", { for: "search", text: "Search people by name" }), input);
+}
+
+function listView() {
+  const { summary } = state.data;
+  const empty = summary.people === 0
+    ? h("p", { class: "status", role: "status", text: "No people were captured, so there is nothing to review." })
+    : null;
+  return h("div", {},
+    h("h1", { tabindex: "-1", text: "Review changes" }),
+    summaryStats(summary), empty, searchField(),
+    h("div", { id: "groups" }, ...groupSections()));
+}
+
+/* Person view */
+
+function badge(decision) {
+  return h("span", { class: "badge", text: decision ? STATUS_LABELS[decision.status] : NOT_REVIEWED });
+}
+
+function editFields(row) {
+  const error = state.errors[row.id];
+  const common = { "aria-invalid": error ? "true" : null, "aria-describedby": error ? `${row.id}-error` : null };
+  const current = row.decision && row.decision.status === "edited" ? row.decision.value : row.edit_seed;
+  const message = error ? h("p", { class: "error", id: `${row.id}-error`, text: error }) : null;
+  if (row.editable === "fact") {
+    return [
+      h("div", { class: "field" }, h("label", { for: `${row.id}-date`, text: "Date, as you want it written" }),
+        h("input", { id: `${row.id}-date`, name: "date_text", value: current.date_text, "data-focus": `${row.id}:value`, ...common })),
+      h("div", { class: "field" }, h("label", { for: `${row.id}-place`, text: "Place" }),
+        h("input", { id: `${row.id}-place`, name: "place", value: current.place, ...common }), message),
+    ];
+  }
+  const control = row.editable === "note"
+    ? h("textarea", { id: `${row.id}-value`, name: "value", "data-focus": `${row.id}:value`, ...common }, current)
+    : h("input", { id: `${row.id}-value`, name: "value", value: current, "data-focus": `${row.id}:value`, ...common });
+  return [h("div", { class: "field" }, h("label", { for: `${row.id}-value`, text: "Value for Gramps" }), control, message)];
+}
+
+function editForm(row) {
+  const form = h("form", {
+    onsubmit: (event) => {
+      event.preventDefault();
+      const fields = Object.fromEntries(new FormData(form));
+      saveEdit(row, row.editable === "fact" ? fields : fields.value);
+    },
+  }, ...editFields(row),
+  h("div", { class: "actions" },
+    h("button", { class: "button", type: "submit", "data-variant": "primary", text: "Save edit" }),
+    h("button", { class: "button", type: "button", text: "Cancel",
+      onclick: () => { state.editing.delete(row.id); state.errors[row.id] = null; render({ keepFocus: `${row.id}:edit` }); } })));
+  return form;
+}
+
+function rowActions(row) {
+  const status = row.decision && row.decision.status;
+  const button = (action, label, pressed, onclick) => h("button", {
+    class: "button", type: "button", "data-action": action, "data-focus": `${row.id}:${action}`,
+    "aria-pressed": pressed ? "true" : "false", text: label, onclick,
+  });
+  return h("div", { class: "actions" },
+    button("accept", "Accept", status === "accepted", () => decide(row, "accepted")),
+    row.editable ? button("edit", "Edit", status === "edited" || state.editing.has(row.id), () => {
+      state.editing.add(row.id);
+      render({ keepFocus: `${row.id}:value` });
+    }) : null,
+    button("reject", "Reject", status === "rejected", () => decide(row, "rejected")));
+}
+
+function changeRow(row) {
+  const both = row.his.length > 0 && row.mine.length > 0;
+  const hisEmpty = row.informational ? "Not in his tree." : "Nothing recorded.";
+  return h("article", { class: "row", "aria-label": row.label },
+    h("div", { class: "row-head" }, h("h3", { text: row.label }), row.informational ? null : badge(row.decision)),
+    row.sensitive ? h("p", { class: "status", role: "note",
+      text: "Sensitive: this note may hold private contact details. Read it before accepting." }) : null,
+    h("div", { class: "compare" },
+      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "His tree" }), ...lines(row.his, both ? row.mine : [], hisEmpty),
+        row.photo ? h("img", { class: "thumb", src: row.photo, alt: row.his[0] || "Captured photo" }) : null),
+      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Mine (Gramps)" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
+    row.proposed ? h("p", { class: "muted", text: `Gramps would hold: ${row.proposed.join("; ")}` }) : null,
+    row.edit_lines ? h("p", { text: `Your edit: ${row.edit_lines.join("; ")}` }) : null,
+    row.informational ? h("p", { class: "muted", text: "Shown for information. This is never changed in Gramps." }) : null,
+    row.informational ? null : rowActions(row),
+    state.editing.has(row.id) ? editForm(row) : null);
+}
+
+function candidateItem(person, candidate) {
+  const chosen = candidate.decision && candidate.decision.status === "accepted";
+  const label = [candidate.name, `(${candidate.gramps_id})`, candidate.years].filter(Boolean).join(" ");
+  return h("li", {}, h("span", { text: label }),
+    chosen
+      ? h("button", { class: "button", type: "button", "aria-pressed": "true", "data-focus": `${candidate.change}:link`,
+          text: "Chosen. Undo", onclick: () => chooseLink(person, null) })
+      : h("button", { class: "button", type: "button", "aria-pressed": "false", "data-focus": `${candidate.change}:link`,
+          text: "Use this person", onclick: () => chooseLink(person, candidate.change) }));
+}
+
+function matchSection(person) {
+  if (person.candidates.length === 0) return null;
+  const note = person.state === "needs_match"
+    ? "Names match but nothing confirms it. Choose the one that is the same person."
+    : "You chose this person. Undo the choice to pick another.";
+  return h("section", { "aria-labelledby": "match-title" },
+    h("h2", { id: "match-title", text: "Matching person in Gramps" }),
+    h("p", { class: "muted", text: note }),
+    h("ul", { class: "candidates" }, ...person.candidates.map((c) => candidateItem(person, c))));
+}
+
+function personSummary(person) {
+  const base = [person.years, person.mine ? `Matched to "${person.mine.name}" (${person.mine.id}): ${person.why}` : null];
+  return h("p", { class: "muted", text: base.filter(Boolean).join(". ") || "No dates recorded." });
+}
+
+function personView(person) {
+  const rows = person.changes;
+  const body = rows.length
+    ? rows.map(changeRow)
+    : [h("p", { class: "status", role: "status", text: person.state === "needs_match" ? "Choose a match to see the changes." : "No differences from Gramps." })];
+  return h("div", {},
+    h("a", { class: "back", href: "#/", text: "Back to all people" }),
+    h("h1", { tabindex: "-1", text: person.name }),
+    personSummary(person), matchSection(person),
+    h("h2", { text: `Changes (${rows.filter((r) => !r.informational).length} to review)` }), ...body);
+}
+
+/* Routing and rendering */
+
+function routePerson() {
+  const found = location.hash.match(/^#\/person\/(\d+)$/);
+  return found ? Number(found[1]) : null;
+}
+
+function updateApply() {
+  const count = state.data ? state.data.summary.accepted : 0;
+  document.getElementById("apply").textContent = `Apply ${plural(count, "accepted change", "accepted changes")}`;
+}
+
+function render({ keepFocus = null, moveFocus = false } = {}) {
+  if (!state.data) {
+    view.replaceChildren(routePerson() === null ? skeletonList() : skeletonPerson());
+    view.setAttribute("aria-busy", "true");
+    return;
+  }
+  view.removeAttribute("aria-busy");
+  const key = routePerson();
+  const person = key === null ? null : state.data.people.find((p) => p.key === key);
+  view.replaceChildren(person ? personView(person) : listView());
+  document.title = person ? `${person.name} - Review changes` : "Review changes";
+  updateApply();
+  if (moveFocus) view.querySelector("h1").focus();
+  if (keepFocus) {
+    const target = view.querySelector(`[data-focus="${keepFocus}"]`);
+    if (target) {
+      target.focus();
+    }
+  }
+}
+
+/* Plan dialog */
+
+function planItem(item) {
+  const text = `${item.action}: ${item.label} for "${item.person}"${item.edited ? " (edited)" : ""}`;
+  return h("li", {}, text, item.sensitive ? h("span", { class: "muted", text: " Sensitive note." }) : null,
+    item.lines.length ? h("div", { class: "muted", text: item.lines.join("; ") }) : null);
+}
+
+async function openPlan() {
+  const dialog = document.getElementById("plan");
+  const body = document.getElementById("plan-body");
+  try {
+    const plan = await api("/api/preview");
+    document.getElementById("plan-title").textContent = `Apply ${plural(plan.count, "accepted change", "accepted changes")}`;
+    body.replaceChildren(plan.count
+      ? h("ol", { class: "plan" }, ...plan.items.map(planItem))
+      : h("p", { class: "status", role: "status", text: "No changes are accepted yet. Accept some changes first." }));
+  } catch (error) {
+    body.replaceChildren(h("p", { class: "status", "data-kind": "error", role: "alert", text: error.message }));
+  }
+  dialog.showModal();
+}
+
+async function start() {
+  initTheme();
+  document.getElementById("apply").addEventListener("click", openPlan);
+  document.getElementById("plan-close").addEventListener("click", () => document.getElementById("plan").close());
+  window.addEventListener("hashchange", () => render({ moveFocus: true }));
+  render();
+  try {
+    state.data = await api("/api/changes");
+    render();
+  } catch (error) {
+    view.replaceChildren(h("p", { class: "status", "data-kind": "error", role: "alert", text: `The review could not load: ${error.message}` }));
+  }
+}
+
+start();
