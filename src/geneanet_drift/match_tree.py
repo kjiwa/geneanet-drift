@@ -47,7 +47,7 @@ def _his_year(person: Person, kind: str) -> int | None:
     return next((e.date.year for e in person.events if e.kind == kind and e.date), None)
 
 
-def _gramps_year(person: GrampsFullPerson, kind: str) -> int | None:
+def gramps_year(person: GrampsFullPerson, kind: str) -> int | None:
     return next(
         (e.date.year for e in person.events if e.kind.casefold() == kind and e.date),
         None,
@@ -60,8 +60,8 @@ def _gramps_person(person: GrampsFullPerson) -> GrampsPerson:
         person.gramps_id,
         person.given,
         person.surname,
-        _gramps_year(person, "birth"),
-        _gramps_year(person, "death"),
+        gramps_year(person, "birth"),
+        gramps_year(person, "death"),
     )
 
 

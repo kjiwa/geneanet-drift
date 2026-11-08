@@ -103,6 +103,15 @@ from an existing file.
 (`DIR` holds `person-<n>.html`) as GEDCOM 5.5.1. Media `FILE` paths are relative to
 the capture folder of the tree (`media/person-<n>/...`).
 
+`geneanet-drift snapshot --out FILE` saves the Gramps tree (read user) to a JSON file.
+`geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves the review page
+on `127.0.0.1` (default: a free port) and prints its URL. It compares the captured
+pages with the snapshot; accept, edit or reject each change, and choose the matching
+Gramps person where names are ambiguous. Decisions are saved to `decisions.json` in
+the data directory, so a review can span sittings. Applying to Gramps is not wired
+up yet. Photos show only when their originals were saved next to `DIR`
+(`../media/person-<n>/`).
+
 Keep the data directory in its own private repository, and list `.env` in that
 repository's `.gitignore`. The tool refuses to run if the data or cache
 directory is inside its own git work tree.

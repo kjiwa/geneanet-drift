@@ -22,6 +22,9 @@ geneanet-drift = "geneanet_drift.wizard:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+geneanet_drift = ["web/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

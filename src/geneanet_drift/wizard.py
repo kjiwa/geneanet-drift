@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from geneanet_drift import gedcom
+from geneanet_drift.capture import CaptureError
 from geneanet_drift.config import (
     Config,
     ConfigError,
@@ -51,6 +52,8 @@ from geneanet_drift.match import (
     work_items,
 )
 from geneanet_drift.review import compare_target, render, source_title, unticked
+from geneanet_drift.review_data import load_review
+from geneanet_drift.server import serve
 from geneanet_drift.tree_file import write_tree
 
 DEFAULT_WINDOW = date(2023, 7, 15)
@@ -340,6 +343,14 @@ def snapshot_tree(cfg: Config, out: Path, ask_secret: AskSecret, say: Say) -> in
     return 0
 
 
+def review_tree(cfg: Config, pages: Path, snapshot: Path, port: int, say: Say) -> int:
+    if not pages.is_dir():
+        raise ConfigError(f"--pages {pages} is not a directory")
+    if not 0 <= port <= 65535:
+        raise ConfigError(f"--port {port} is not a port number")
+    return serve(cfg, load_review(cfg, pages, snapshot), port, say)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["gedcom"]:
@@ -364,6 +375,16 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command")
     snapshot = commands.add_parser("snapshot", help="save the Gramps tree to a file")
     snapshot.add_argument("--out", type=Path, required=True, help="JSON file to write")
+    review = commands.add_parser("review", help="review the captured tree in a browser")
+    review.add_argument(
+        "--pages", type=Path, required=True, help="directory of captured person pages"
+    )
+    review.add_argument(
+        "--snapshot", type=Path, required=True, help="file from `snapshot --out`"
+    )
+    review.add_argument(
+        "--port", type=int, default=0, help="port on 127.0.0.1 (default: a free one)"
+    )
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.data_dir, os.environ)
@@ -371,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Warning: {warning}.")
         if args.command == "snapshot":
             return snapshot_tree(cfg, args.out, getpass.getpass, print)
+        if args.command == "review":
+            return review_tree(cfg, args.pages, args.snapshot, args.port, print)
         if args.done:
             return finish(cfg, input, print)
         client = _connect(cfg, getpass.getpass)
@@ -379,6 +402,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print(file=sys.stderr)
         return 130
-    except (ConfigError, FeedError, GrampsError, EOFError) as error:
+    except (ConfigError, FeedError, GrampsError, CaptureError, EOFError) as error:
         print(f"error: {error or type(error).__name__}", file=sys.stderr)
         return 1
