@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from geneanet_drift import gedcom
 from geneanet_drift.config import (
     Config,
     ConfigError,
@@ -311,6 +312,9 @@ def _connect(cfg: Config, ask_secret: AskSecret) -> GrampsClient:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["gedcom"]:
+        return gedcom.main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="geneanet-drift",
         description="Report a Geneanet tree's recent edits against a Gramps tree.",
