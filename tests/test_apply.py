@@ -16,13 +16,14 @@ from geneanet_drift.apply import (
     backup,
     build_plan,
     holds,
+    newest_steps,
     patched,
     preview,
     read_log,
     undo,
 )
 from geneanet_drift.capture import Media
-from geneanet_drift.config import load_config
+from geneanet_drift.config import load_config, write_json
 from geneanet_drift.decisions import ACCEPTED, EDITED, REJECTED, Decision
 from geneanet_drift.diff import diff_people
 from geneanet_drift.feed import name_key
@@ -70,9 +71,11 @@ class FakeServer:
         self.token = make_token(*permissions)
         self.store: dict[str, dict] = {"/api/metadata/": {}}
         self.requests: list[tuple[str, str]] = []
-        self.transactions: list[int] = []
+        self.history: list[dict] = []
         self.fail_on: tuple[str, str] | None = None
+        self.fail_skip = 0
         self.media = 0
+        self.undone: set[int] = set()
         for person in mine.people if mine else ():
             self.store[f"/api/people/{person.handle}"] = {
                 "handle": person.handle,
@@ -80,6 +83,7 @@ class FakeServer:
                 "note_list": [],
                 "event_ref_list": [],
                 "media_list": [],
+                "parent_family_list": [],
             }
             for event in person.events:
                 self.store[f"/api/events/{event.handle}"] = {
@@ -88,14 +92,36 @@ class FakeServer:
                     "citation_list": [],
                     "note_list": [],
                 }
+        for fam in mine.families if mine else ():
+            self.store[f"/api/families/{fam.handle}"] = {
+                "handle": fam.handle,
+                "father_handle": fam.father,
+                "mother_handle": fam.mother,
+                "child_ref_list": [{"ref": c} for c in fam.children],
+                "citation_list": [],
+                "note_list": [],
+            }
+
+    @property
+    def transactions(self) -> list[int]:
+        return [t["id"] for t in self.history]
 
     def writes(self) -> list[tuple[str, str]]:
         return [
             r for r in self.requests if r[0] in ("POST", "PUT") and "token" not in r[1]
         ]
 
-    def _commit(self) -> None:
-        self.transactions.append(len(self.transactions) + 1)
+    def commit(self, user="editor", added=()) -> int:
+        number = len(self.history) + 1
+        changes = [{"obj_class": c, "obj_handle": h, "trans_type": 0} for c, h in added]
+        self.history.append(
+            {
+                "id": number,
+                "connection": {"user": {"name": user}},
+                "changes": changes,
+            }
+        )
+        return number
 
     def _add(self, item: dict) -> dict:
         cls = item["_class"]
@@ -107,25 +133,36 @@ class FakeServer:
     def _post(self, path: str, body: bytes, headers):
         if path == "/api/objects/":
             changes = [self._add(item) for item in json.loads(body)]
-            self._commit()
+            self.commit(added=[(c["_class"], c["handle"]) for c in changes])
             return 201, {}, json.dumps(changes).encode()
         if path == "/api/media/":
             self.media += 1
             handle = f"media{self.media}"
             change = self._add({"_class": "Media", "handle": handle, "desc": ""})
             self.store[f"/api/media/{handle}"]["mime"] = headers["Content-Type"]
-            self._commit()
+            self.commit(added=[("Media", handle)])
             return 201, {}, json.dumps([change]).encode()
         if path.endswith("/undo"):
-            self.requests.append(("UNDO", path))
-            return 202, {}, json.dumps({"task": {"id": "t1"}}).encode()
+            return self._undo(int(path.split("/")[-2]))
         return 404, {}, b"{}"
+
+    def _undo(self, number: int):
+        self.requests.append(("UNDO", path_of(number)))
+        fresh = number not in self.undone
+        self.undone.add(number)
+        for change in self.history[number - 1]["changes"] if fresh else ():
+            key = (
+                f"/api/{records.ENDPOINTS[change['obj_class']]}/{change['obj_handle']}"
+            )
+            self.store.pop(key, None)
+        task = f"ok{number}" if fresh else f"fail{number}"
+        return 202, {}, json.dumps({"task": {"id": task}}).encode()
 
     def _put(self, path: str, body: bytes):
         if path not in self.store:
             return 404, {}, b"{}"
         self.store[path] = json.loads(body)
-        self._commit()
+        self.commit()
         cls = ENDPOINT_CLASSES[path.split("/")[2]]
         change = {"_class": cls, "handle": path.rsplit("/", 1)[1]}
         return 200, {}, json.dumps([change]).encode()
@@ -133,10 +170,12 @@ class FakeServer:
     def _get(self, path: str, query: dict):
         if path == HISTORY:
             size = int(query["pagesize"][0])
-            rows = [{"id": i} for i in reversed(self.transactions)][:size]
+            rows = list(reversed(self.history))[:size]
             return 200, {}, json.dumps(rows).encode()
         if path.startswith("/api/tasks/"):
-            return 200, {}, json.dumps({"state": "SUCCESS"}).encode()
+            failed = path.rsplit("/", 1)[1].startswith("fail")
+            state = "FAILURE" if failed else "SUCCESS"
+            return 200, {}, json.dumps({"state": state}).encode()
         if path in self.store:
             return 200, {}, json.dumps(self.store[path]).encode()
         return 404, {}, b"{}"
@@ -147,12 +186,18 @@ class FakeServer:
         if parts.path == "/api/token/":
             return 200, {}, json.dumps({"access_token": self.token}).encode()
         if self.fail_on == (method, parts.path):
-            return 500, {}, b"{}"
+            if self.fail_skip == 0:
+                return 500, {}, b"{}"
+            self.fail_skip -= 1
         if method == "GET":
             return self._get(parts.path, parse_qs(parts.query))
         if method == "POST":
             return self._post(parts.path, body, headers)
         return self._put(parts.path, body)
+
+
+def path_of(number: int) -> str:
+    return f"{HISTORY}{number}/undo"
 
 
 def writer_for(server: FakeServer) -> GrampsWriter:
@@ -244,7 +289,7 @@ def objects_of(step):
 
 def test_the_writer_refuses_a_token_without_edit_rights():
     server = FakeServer(permissions=("ViewPrivate",))
-    with pytest.raises(GrampsError, match="lacks AddObject, EditObject"):
+    with pytest.raises(GrampsError, match="lacks AddObject, DeleteObject, EditObject"):
         writer_for(server).get("/api/metadata/")
 
 
@@ -651,3 +696,255 @@ def test_patches_are_idempotent_and_set_the_birth_index():
     assert once["birth_ref_index"] == 0
     stored = {**once, "event_ref_list": [{"ref": "e1", "role": "Primary"}]}
     assert holds(stored, patch)
+
+
+def seed_log(path, transactions):
+    entry = {
+        "change": "c1",
+        "index": 0,
+        "summary": "s",
+        "created": [],
+        "updated": [],
+        "transactions": list(transactions),
+    }
+    write_json(path, {"steps": [entry]})
+
+
+def test_a_partial_undo_is_saved_per_transaction_and_resumes(tmp_path):
+    server = FakeServer()
+    for _ in range(3):
+        server.commit()
+    log = tmp_path / "applied.json"
+    seed_log(log, [1, 2, 3])
+    server.fail_on = ("POST", path_of(1))
+    with pytest.raises(GrampsError, match="HTTP 500"):
+        undo(writer_for(server), log, 1)
+    assert [p for m, p in server.requests if m == "UNDO"] == [path_of(3), path_of(2)]
+    assert read_log(log)[0]["transactions"] == [1]
+    server.fail_on = None
+    server.requests.clear()
+    assert undo(writer_for(server), log, 1) == 1
+    assert [p for m, p in server.requests if m == "UNDO"] == [path_of(1)]
+    assert read_log(log) == []
+
+
+def test_a_transaction_that_was_already_undone_does_not_stop_a_resume(tmp_path):
+    server = FakeServer()
+    server.commit(added=[("Note", "n1")])
+    server.undone.add(1)
+    log = tmp_path / "applied.json"
+    seed_log(log, [1])
+    assert undo(writer_for(server), log, 1) == 1
+    assert read_log(log) == []
+
+
+def test_a_failed_undo_of_an_object_that_still_exists_is_an_error(tmp_path):
+    server = FakeServer()
+    server.commit(added=[("Note", "n1")])
+    server.undone.add(1)
+    server.store["/api/notes/n1"] = {"handle": "n1"}
+    log = tmp_path / "applied.json"
+    seed_log(log, [1])
+    with pytest.raises(GrampsError, match="failed"):
+        undo(writer_for(server), log, 1)
+    assert read_log(log)[0]["transactions"] == [1]
+
+
+@pytest.mark.parametrize("last", [1, 2, 5])
+def test_the_undo_preview_and_the_undo_select_the_same_steps(last):
+    log = [{"change": str(i)} for i in range(3)]
+    assert newest_steps(log, last) == log[-last:]
+
+
+def parent_people(families=(), parent_families=()):
+    return [
+        gramps(
+            "h1",
+            "Ardeth",
+            "Pellow",
+            citations=(crosswalk("Ardeth Pellow"),),
+            families=families,
+        ),
+        gramps(
+            "h3",
+            "Wren",
+            "Pellow",
+            gender="female",
+            citations=(crosswalk("Wren Pellow"),),
+            parent_families=parent_families,
+        ),
+    ]
+
+
+PARENT_HIS = [
+    his(1, "Ardeth", "Pellow"),
+    his(3, "Wren", "Pellow", sex="female", parents=(ref(1),)),
+]
+
+
+def test_a_rerun_after_a_partial_parent_change_makes_no_second_family(tmp_path):
+    first, _ = small_world(tmp_path, parent_people(), PARENT_HIS)
+    parent_steps = [s for s in first.steps if not s.change_id.startswith("source")]
+    assert len(parent_steps) == 3
+    server = FakeServer(tree(parent_people()))
+    log = tmp_path / "applied.json"
+    server.fail_on = ("PUT", "/api/people/h3")
+    with pytest.raises(GrampsError, match="HTTP 500"):
+        apply(first, writer_for(server), log)
+    assert len(read_log(log)) == len(first.steps) - 1
+    made = records.handle_for("family", "h1")
+    assert f"/api/families/{made}" in server.store
+    second, _ = small_world(
+        tmp_path,
+        parent_people(families=(made,)),
+        PARENT_HIS,
+        [family(made, "h1", None, ["h3"])],
+    )
+    assert [(s.change_id, s.index) for s in second.steps] == [
+        (s.change_id, s.index) for s in first.steps
+    ]
+    server.fail_on = None
+    server.requests.clear()
+    assert apply(second, writer_for(server), log) == 1
+    assert server.writes() == [("PUT", "/api/people/h3")]
+    assert [p for p in server.store if p.startswith("/api/families/")] == [
+        f"/api/families/{made}"
+    ]
+
+
+def test_a_parent_joins_the_family_with_the_matching_spouse(tmp_path):
+    mine = [
+        gramps(
+            "h1",
+            "Ardeth",
+            "Pellow",
+            citations=(crosswalk("Ardeth Pellow"),),
+            families=("f1", "f2"),
+        ),
+        gramps("h2", "Maren", "Voss", gender="female", families=("f1",)),
+        gramps(
+            "h5",
+            "Quill",
+            "Hartnoll",
+            gender="female",
+            citations=(crosswalk("Quill Hartnoll"),),
+            families=("f2",),
+        ),
+        gramps(
+            "h3",
+            "Wren",
+            "Pellow",
+            citations=(crosswalk("Wren Pellow"),),
+            gender="female",
+        ),
+    ]
+    his_list = [
+        his(1, "Ardeth", "Pellow"),
+        his(5, "Quill", "Hartnoll", sex="female"),
+        his(3, "Wren", "Pellow", sex="female", parents=(ref(1), ref(5))),
+    ]
+    plan, _ = small_world(
+        tmp_path,
+        mine,
+        his_list,
+        [family("f1", "h1", "h2"), family("f2", "h1", "h5")],
+    )
+    families = {s.path for s in plan.steps if s.path.startswith("/api/families/")}
+    assert families == {"/api/families/f2"}
+
+
+def test_an_event_with_nothing_to_set_writes_nothing(tmp_path):
+    mine = [
+        gramps(
+            "h1",
+            "Ardeth",
+            "Pellow",
+            events=(ardeth_born(1901),),
+            citations=(crosswalk("Ardeth Pellow"),),
+        )
+    ]
+    people = his_people(
+        his(1, "Ardeth", "Pellow", events=(his_event("born", 1902, BRINDLE),))
+    )
+    snapshot = tree(mine)
+    matches = match_people(people, snapshot, SOURCE, set())
+    changes = diff_people(people, snapshot, matches)
+    born = next(c for c in changes if c.field == "event:born")
+    decisions = {born.id: Decision(EDITED, born.mine)}
+    inputs = Inputs(people, matches, snapshot, references(), "example", TODAY, tmp_path)
+    plan = build_plan(changes, decisions, inputs)
+    assert plan.steps == ()
+    assert any("nothing to set" in reason for reason in plan.skipped)
+
+
+def test_alternate_names_never_raise():
+    assert records.alternate_name("   ") is None
+    single = records.alternate_name("Toby")
+    assert single["first_name"] == "Toby"
+    assert single["surname_list"][0]["surname"] == ""
+    full = records.alternate_name("Tobias Pellowe")
+    assert full["first_name"] == "Tobias"
+    assert full["surname_list"][0]["surname"] == "Pellowe"
+
+
+def test_a_blank_other_name_is_skipped_with_a_message(tmp_path):
+    mine = [gramps("h1", "Ardeth", "Pellow", citations=(crosswalk("Ardeth Pellow"),))]
+    people = his_people(his(1, "Ardeth", "Pellow", other_names=("Ard",)))
+    snapshot = tree(mine)
+    matches = match_people(people, snapshot, SOURCE, set())
+    changes = diff_people(people, snapshot, matches)
+    change = next(c for c in changes if c.field == "other_name")
+    inputs = Inputs(people, matches, snapshot, references(), "example", TODAY, tmp_path)
+    plan = build_plan(changes, {change.id: Decision(EDITED, "  ")}, inputs)
+    assert plan.steps == ()
+    assert any("blank" in reason for reason in plan.skipped)
+
+
+def test_the_journal_records_only_our_own_transactions(tmp_path):
+    plan, inputs, _ = build(tmp_path)
+    server = FakeServer(inputs.tree)
+    original = server.commit
+
+    def with_a_stranger(user="editor", added=()):
+        original(user="someone-else")
+        return original(user, added)
+
+    server.commit = with_a_stranger
+    log = tmp_path / "applied.json"
+    apply(plan, writer_for(server), log)
+    ours = {
+        t["id"] for t in server.history if t["connection"]["user"]["name"] == "editor"
+    }
+    recorded = {t for e in read_log(log) for t in e["transactions"]}
+    assert recorded == ours
+
+
+def test_a_failed_journal_read_after_a_write_leaves_the_step_partial(tmp_path):
+    plan, inputs, _ = build(tmp_path)
+    server = FakeServer(inputs.tree)
+    server.fail_on = ("GET", HISTORY)
+    server.fail_skip = 1
+    log = tmp_path / "applied.json"
+    with pytest.raises(GrampsError, match="HTTP 500"):
+        apply(plan, writer_for(server), log)
+    (entry,) = read_log(log)
+    assert entry["partial"] is True
+    assert entry["created"]
+    server.fail_on = None
+    with pytest.raises(DriftError, match="interrupted"):
+        apply(plan, writer_for(server), log)
+
+
+def test_a_drift_message_names_the_step_the_object_and_the_way_forward(tmp_path):
+    plan, inputs, _ = build(tmp_path)
+    server = FakeServer(inputs.tree)
+    log = tmp_path / "applied.json"
+    apply(plan, writer_for(server), log)
+    server.store["/api/events/e-Birth-1901"]["date"]["dateval"] = [0, 0, 1999, False]
+    with pytest.raises(DriftError) as raised:
+        apply(plan, writer_for(server), log)
+    text = str(raised.value)
+    assert "/api/events/e-Birth-1901" in text
+    assert "update the birth of Ardeth Pellow" in text
+    assert "applied.json" in text
+    assert "undo" in text

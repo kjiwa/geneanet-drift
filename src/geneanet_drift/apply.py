@@ -1,3 +1,4 @@
+import copy
 import json
 import mimetypes
 import os
@@ -21,6 +22,7 @@ from geneanet_drift.gramps import (
     GrampsEvent,
     GrampsTree,
     GrampsWriter,
+    HttpError,
     References,
 )
 from geneanet_drift.match_tree import LINKED, Match, display_name
@@ -36,6 +38,7 @@ GZIP_MAGIC = b"\x1f\x8b"
 TASK_POLLS = 120
 TASK_INTERVAL = 0.5
 HISTORY_WINDOW = 50
+UNDO_WINDOW = 500
 
 
 class DriftError(GrampsError):
@@ -142,7 +145,13 @@ class _Planner:
             return ref["handle"]
         if not ref:
             return None
-        return self.new_handles.get(ref["key"]) or self.linked.get(ref["key"])
+        return self.key_handle(ref["key"])
+
+    def key_handle(self, key: int | None) -> str | None:
+        match = self.inputs.matches.get(key)
+        if match and match.kind == LINKED:
+            return match.handle
+        return self.new_handles.get(key) or self.linked.get(key)
 
     def gender(self, handle: str) -> str:
         if handle in self.mine:
@@ -254,6 +263,9 @@ class _Planner:
         if bundle["media"]:
             self.skip(change, "media of a new person waits until he is linked")
         names = [records.alternate_name(n) for n in bundle["other_names"]]
+        if None in names:
+            self.skip(change, "a blank other name was left out")
+        names = [n for n in names if n]
         parents = [h for h in map(self.resolve, bundle["parents"]) if h]
         families = self.person_families(change, handle, parents, bundle["unions"])
         objects.append(
@@ -346,13 +358,11 @@ class _Planner:
         key = records.handle_for("family", *sorted(partners))
         known = self.existing_family(partners)
         if known is not None or key in self.planned:
-            self.join_family(change, known.handle if known else key, children, known)
+            self.join_family(change, known.handle if known else key, children)
             return []
         self.planned[key] = list(children)
         self.partners[key] = list(partners)
-        fathers = [p for p in partners if self.gender(p) == "male"]
-        father = (fathers or partners)[0]
-        mother = next((p for p in partners if p != father), None)
+        father, mother = self.order(partners)
         objects: list[dict] = []
         refs: list[dict] = []
         if marriage and (marriage["date"] or marriage["place"]):
@@ -370,8 +380,17 @@ class _Planner:
         objects.append(records.family(key, father, mother, children, refs, **extras))
         return objects
 
-    def join_family(self, change, family_handle, children, known) -> None:
-        present = set(known.children) if known else set(self.planned[family_handle])
+    def order(self, partners: list[str]) -> tuple[str | None, str | None]:
+        fathers = [p for p in partners if self.gender(p) == "male"]
+        if not fathers and len(partners) == 1 and self.gender(partners[0]) == "female":
+            return None, partners[0]
+        father = (fathers or partners)[0]
+        return father, next((p for p in partners if p != father), None)
+
+    def join_family(self, change, family_handle, children) -> None:
+        """Adds children whether or not they are already in the live family, so
+        the steps do not depend on what an interrupted run already wrote."""
+        present = set(self.planned.get(family_handle, ()))
         added = [c for c in children if c not in present]
         for child in added:
             self.patch_row(
@@ -388,7 +407,7 @@ class _Planner:
                 Patch(appends=(("parent_family_list", family_handle),)),
                 f"link {child} to family {family_handle}",
             )
-        if not known:
+        if family_handle in self.planned:
             self.planned[family_handle] += added
 
     # Existing people
@@ -430,7 +449,11 @@ class _Planner:
         self.simple(change, f"set surname {value}", patch)
 
     def other_name_field(self, change, value) -> None:
-        patch = Patch(appends=(("alternate_names", records.alternate_name(value)),))
+        name = records.alternate_name(value)
+        if name is None:
+            self.skip(change, "the other name is blank")
+            return
+        patch = Patch(appends=(("alternate_names", name),))
         self.simple(change, f"add the other name {value}", patch)
 
     def note_field(self, change, value) -> None:
@@ -493,6 +516,9 @@ class _Planner:
             "date": value["date"] if value["date"] != known.get("date") else None,
             "place": value["place"] if value["place"] != known.get("place") else None,
         }
+        if not any(fields.values()):
+            self.skip(change, "nothing to set; Gramps already holds these values")
+            return
         self.event_fact(change, kind, existing, fields)
 
     def event_fact(self, change, kind, existing: GrampsEvent | None, fields) -> None:
@@ -553,56 +579,112 @@ class _Planner:
         if parent is None:
             self.skip(change, "the parent is not in Gramps or in this plan")
             return
-        family = self.family_of(parent, child)
-        if family is None:
-            partners = [parent]
-            objects = self.family(change, partners, [child], None, evidence=True)
-            if not objects:
-                self.skip(change, "the family is already planned or exists")
-                return
+        label = self.label(change)
+        evidence, cite, why = self.evidence(change, "parent", records.NOTE_FAMILY)
+        self.row(
+            PHASE_EDITS,
+            change,
+            "POST",
+            OBJECTS,
+            evidence,
+            (ADD,),
+            f"add the citation and note for: record the parent of {label}",
+        )
+        found = self.family_of(parent, child, self.other_parents(change, parent))
+        family = self.parent_family(change, parent, child, found, (cite, why))
+        self.patch_row(
+            change,
+            "people",
+            child,
+            Patch(appends=(("parent_family_list", family),)),
+            f"link {label} to family {family}",
+        )
+
+    def parent_family(self, change, parent, child, found, evidence) -> str:
+        """One step that creates the family or joins the child to a found one."""
+        cite, why = evidence
+        label = self.label(change)
+        if found is None:
+            key = records.handle_for("family", parent)
+            father, mother = self.order([parent])
+            family = records.family(
+                key, father, mother, [child], [], citation_list=[cite], note_list=[why]
+            )
+            self.planned[key] = [child]
+            self.partners[key] = [parent]
             self.row(
                 PHASE_EDITS,
                 change,
                 "POST",
                 OBJECTS,
-                objects,
+                [family],
                 (ADD, EDIT),
-                f"create a family for {self.label(change)} with parent {parent}",
+                f"create a family for {label} with parent {parent}",
             )
-            return
-        self.join_family(change, family, [child], self.families.get(family))
-        self.edit(
+            return key
+        handle, slot = found
+        sets = ((slot, parent),) if slot else ()
+        appends = (
+            ("child_ref_list", records.child_ref(child)),
+            ("citation_list", cite),
+            ("note_list", why),
+        )
+        self.patch_row(
             change,
-            "people",
-            child,
-            f"record the parent for {self.label(change)}",
-            Patch(),
-            [],
-            records.NOTE_PERSON,
+            "families",
+            handle,
+            Patch(sets, appends),
+            f"add {label} to family {handle}",
         )
+        if handle in self.planned:
+            self.partners[handle] += [parent] if slot else []
+            self.planned[handle] += [child] if child not in self.planned[handle] else []
+        return handle
 
-    def family_of(self, parent: str, child: str) -> str | None:
+    def other_parents(self, change: Change, parent: str) -> set[str]:
+        refs = self.inputs.people[change.person].parents
+        found = {self.key_handle(r.key) for r in refs if r.key is not None}
+        return found - {parent, None}
+
+    def family_candidates(self):
         for handle, family in self.families.items():
-            if (
-                parent in (family.father, family.mother)
-                and child not in family.children
-            ):
-                return handle
-        return next(
-            (
-                handle
-                for handle, children in self.planned.items()
-                if parent in self.partners[handle] and child not in children
-            ),
-            None,
-        )
+            yield handle, family.father, family.mother, list(family.children)
+        for handle, children in self.planned.items():
+            father, mother = self.order(self.partners[handle])
+            yield handle, father, mother, children
+
+    def family_of(self, parent: str, child: str, others: set[str]):
+        """(family, free slot) for the parent: a family they partner with the
+        child's other parent, else the child's family missing this parent."""
+        best, best_score = None, 0
+        for handle, father, mother, children in self.family_candidates():
+            partners = [p for p in (father, mother) if p]
+            if parent in partners:
+                spouse = [p for p in partners if p != parent]
+                score = 3 if spouse and spouse[0] in others else 0 if spouse else 1
+                found = (handle, None)
+            elif child in children and len(partners) == 1 and partners[0] in others:
+                score = 2
+                found = (handle, "father_handle" if father is None else "mother_handle")
+            else:
+                continue
+            if score > best_score:
+                best, best_score = found, score
+        return best
+
+    def his_children(self, change: Change) -> list[str]:
+        key = int(change.field.removeprefix("union:"))
+        person = self.inputs.people[change.person]
+        union = next(u for u in person.unions if u.key == key)
+        handles = (self.key_handle(c.key) for c in union.children)
+        return [h for h in handles if h]
 
     def union(self, change: Change, value: dict) -> None:
         person = self.handle_of(change)
         spouse = self.resolve(value["spouse"])
         partners = [person, *([spouse] if spouse else [])]
-        children = [h for h in map(self.resolve, value["children"]) if h]
         if change.kind == NEW_VALUE:
+            children = [h for h in map(self.resolve, value["children"]) if h]
             objects = self.family(change, partners, children, value, evidence=True)
             if objects:
                 summary = f"create a family for {self.label(change)}"
@@ -617,16 +699,25 @@ class _Planner:
         if family is None:
             self.skip(change, "the family to change was not found")
             return
-        self.join_family(change, family.handle, children, family)
+        children = self.his_children(change)
+        refs = tuple(("child_ref_list", records.child_ref(c)) for c in children)
         self.edit(
             change,
             "families",
             family.handle,
             f"update the family of {self.label(change)}",
-            Patch(),
+            Patch(appends=refs),
             [],
             records.NOTE_FAMILY,
         )
+        for child in children:
+            self.patch_row(
+                change,
+                "people",
+                child,
+                Patch(appends=(("parent_family_list", family.handle),)),
+                f"link {child} to family {family.handle}",
+            )
 
     # Result
 
@@ -806,8 +897,17 @@ def holds(obj: dict, patch: Patch) -> bool:
     )
 
 
+def _author(transaction: dict) -> str | None:
+    return transaction.get("connection", {}).get("user", {}).get("name")
+
+
 class _Journal:
-    """Reads the transaction ids a write produced; the API's reply carries none."""
+    """Reads the transaction ids a write produced; the API's reply carries none.
+
+    A transaction counts if it is newer than the newest one seen before the
+    write and was made by the write user. Another session of the same user
+    writing at the same moment would be misattributed.
+    """
 
     def __init__(self, writer: GrampsWriter):
         self._writer = writer
@@ -819,14 +919,21 @@ class _Journal:
 
     def record(self, entry: dict) -> None:
         batch, _ = self._writer.get(HISTORY, sort="-id", pagesize=HISTORY_WINDOW)
-        fresh = sorted(t["id"] for t in batch if t["id"] > self._last)
+        fresh = sorted(
+            t["id"]
+            for t in batch
+            if t["id"] > self._last and _author(t) == self._writer.username
+        )
         entry["transactions"].extend(fresh)
         self._last = max([self._last, *fresh])
 
 
 def _put(writer, journal, entry, path, patch: Patch) -> None:
     current, _ = writer.get(path)
-    changes = writer.put_json(path, patched(current, patch))
+    new = patched(copy.deepcopy(current), patch)
+    if new == current:
+        return
+    changes = writer.put_json(path, new)
     _record_changes(entry, [{**c, "type": "update"} for c in changes])
     journal.record(entry)
 
@@ -859,6 +966,13 @@ def _runner(step: Step):
     return _run_put if isinstance(step.body, Patch) else _run_objects
 
 
+_DRIFT_ADVICE = (
+    "Check the object in Gramps. To keep its current state and write the step "
+    "again, delete that step's entry from applied.json and rerun; to roll back, "
+    "run `geneanet-drift undo --last N`."
+)
+
+
 def _verify(writer: GrampsWriter, step: Step, entry: dict) -> None:
     if entry.get("partial"):
         raise DriftError(
@@ -872,15 +986,16 @@ def _verify(writer: GrampsWriter, step: Step, entry: dict) -> None:
             current, _ = writer.get(step.path)
             if not holds(current, step.body):
                 raise DriftError(
-                    f"{step.path} no longer holds what step {step.change_id}:"
-                    f"{step.index} wrote ({step.summary}); it changed since"
+                    f"{step.path} no longer holds what step "
+                    f"{step.change_id}:{step.index} wrote ({step.summary}); it "
+                    f"changed since. {_DRIFT_ADVICE}"
                 )
     except DriftError:
         raise
     except GrampsError as error:
         raise DriftError(
             f"step {step.change_id}:{step.index} ({step.summary}) cannot be "
-            f"re-read: {error}"
+            f"re-read: {error}. {_DRIFT_ADVICE}"
         ) from error
 
 
@@ -909,7 +1024,7 @@ def apply(
         entry = _entry(step)
         try:
             _runner(step)(writer, journal, entry, step)
-        except GrampsError:
+        except Exception:
             if entry["created"] or entry["updated"]:
                 log.append({**entry, "partial": True})
                 _write_log(log_path, log)
@@ -931,19 +1046,55 @@ def _wait_for(writer: GrampsWriter, task: str) -> None:
     raise GrampsError(f"task {task} did not finish")
 
 
+def newest_steps(log: list[dict], last: int) -> list[dict]:
+    return log[-last:] if last > 0 else []
+
+
+def _already_undone(writer: GrampsWriter, transaction: int) -> bool:
+    """True when every object the transaction added is gone already."""
+    batch, _ = writer.get(HISTORY, sort="-id", pagesize=UNDO_WINDOW)
+    row = next((t for t in batch if t["id"] == transaction), {})
+    changes = [
+        c for c in row.get("changes", []) if c.get("obj_class") in records.ENDPOINTS
+    ]
+    if not changes or any(c.get("trans_type") != 0 for c in changes):
+        return False
+    for change in changes:
+        path = f"/api/{records.ENDPOINTS[change['obj_class']]}/{change['obj_handle']}"
+        try:
+            writer.get(path)
+        except HttpError as error:
+            if error.status != 404:
+                raise
+        else:
+            return False
+    return True
+
+
+def _undo_transaction(writer: GrampsWriter, transaction: int) -> None:
+    try:
+        reply = writer.post_json(f"{HISTORY}{transaction}/undo", {})
+        _wait_for(writer, reply["task"]["id"])
+    except GrampsError:
+        if not _already_undone(writer, transaction):
+            raise
+
+
 def undo(
     writer: GrampsWriter,
     log_path: Path,
     last: int,
     say: Callable[[str], None] = lambda message: None,
 ) -> int:
-    """Reverts the newest logged steps, newest transaction first."""
+    """Reverts the newest logged steps, newest transaction first, saving the
+    log after each transaction so an interrupted undo resumes where it stopped."""
     log = read_log(log_path)
     undone = 0
-    for entry in reversed(log[-last:] if last else []):
-        for transaction in reversed(entry["transactions"]):
-            reply = writer.post_json(f"{HISTORY}{transaction}/undo", {})
-            _wait_for(writer, reply["task"]["id"])
+    for entry in reversed(newest_steps(log, last)):
+        while entry["transactions"]:
+            _undo_transaction(writer, entry["transactions"][-1])
+            entry["transactions"].pop()
+            _write_log(log_path, log)
         log.remove(entry)
         _write_log(log_path, log)
         undone += 1

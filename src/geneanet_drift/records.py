@@ -127,9 +127,14 @@ def name(given: str, surname: str, alternate: bool = False) -> dict:
     } | ({"type": typed("NameType", NAME_AKA)} if alternate else {})
 
 
-def alternate_name(full: str) -> dict:
-    *given, surname = full.split()
-    return name(" ".join(given), surname, alternate=True)
+def alternate_name(full: str) -> dict | None:
+    """The last word is the surname; a single word is a given name; blank is None."""
+    words = full.split()
+    if not words:
+        return None
+    if len(words) == 1:
+        return name(words[0], "", alternate=True)
+    return name(" ".join(words[:-1]), words[-1], alternate=True)
 
 
 def person(handle: str, given: str, surname: str, gender: str, **fields) -> dict:

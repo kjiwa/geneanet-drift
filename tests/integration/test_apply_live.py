@@ -25,6 +25,7 @@ from geneanet_drift.apply import (
     undo,
 )
 from geneanet_drift.capture import Date, Event, Media
+from geneanet_drift.config import write_json
 from geneanet_drift.decisions import ACCEPTED, Decision
 from geneanet_drift.diff import diff_people
 from geneanet_drift.gedcom import media_path
@@ -295,7 +296,11 @@ def test_a_rerun_is_a_no_op(world, writer, recorder, reader):
 
 
 def test_undo_restores_the_tree(world, writer, reader):
-    count = len(read_log(world["log"]))
-    assert undo(writer, world["log"], count) == count
+    entries = read_log(world["log"])
+    assert undo(writer, world["log"], len(entries)) == len(entries)
     assert read_log(world["log"]) == []
+    assert take_tree(reader) == world["before"]
+    # An interrupted undo may be rerun over a transaction that is already undone.
+    write_json(world["log"], {"steps": [entries[0]]})
+    assert undo(writer, world["log"], 1) == 1
     assert take_tree(reader) == world["before"]

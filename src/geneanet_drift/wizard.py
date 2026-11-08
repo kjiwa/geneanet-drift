@@ -13,6 +13,7 @@ from geneanet_drift.apply import (
     apply,
     backup,
     build_plan,
+    newest_steps,
     preview,
     read_log,
     undo,
@@ -410,7 +411,7 @@ def apply_decisions(
 def undo_applied(
     cfg: Config, last: int, ask: Ask, ask_secret: AskSecret, say: Say
 ) -> int:
-    entries = read_log(cfg.applied_path)[-last:]
+    entries = newest_steps(read_log(cfg.applied_path), last)
     if not entries:
         say("Nothing applied to undo.")
         return 0
@@ -450,6 +451,13 @@ def review_tree(cfg: Config, pages: Path, snapshot: Path, port: int, say: Say) -
     if not 0 <= port <= 65535:
         raise ConfigError(f"--port {port} is not a port number")
     return serve(cfg, load_review(cfg, pages, snapshot), port, say)
+
+
+def _positive(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -493,7 +501,9 @@ def main(argv: list[str] | None = None) -> int:
         "--pages", type=Path, required=True, help="captured pages"
     )
     undo_command = commands.add_parser("undo", help="revert the newest applied steps")
-    undo_command.add_argument("--last", type=int, required=True, help="steps to revert")
+    undo_command.add_argument(
+        "--last", type=_positive, required=True, help="steps to revert"
+    )
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.data_dir, os.environ)

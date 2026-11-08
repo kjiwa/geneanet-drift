@@ -441,3 +441,11 @@ def test_apply_shows_the_plan_then_backs_up_before_writing(cfg, tmp_path, monkey
     assert apply_decisions(cfg, tmp_path, ask, None, said.append, now) == 0
     assert calls == ["backup", "apply"]
     assert said[-1].startswith("Applied 3 steps")
+
+
+@pytest.mark.parametrize("last", ["0", "-1", "x"])
+def test_undo_rejects_a_step_count_below_one_at_parsing(last, capsys):
+    with pytest.raises(SystemExit) as raised:
+        main(["undo", "--last", last])
+    assert raised.value.code == 2
+    assert "--last" in capsys.readouterr().err
