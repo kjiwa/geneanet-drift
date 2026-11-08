@@ -99,6 +99,10 @@ Options: `--since YYYY-MM-DD` reviews from that date instead of after the last s
 (the first run asks how far back to look), and `--feed PATH` reads the change log
 from an existing file.
 
+`geneanet-drift gedcom --pages DIR --out FILE` exports the captured person pages
+(`DIR` holds `person-<n>.html`) as GEDCOM 5.5.1. Media `FILE` paths are relative to
+the capture folder of the tree (`media/person-<n>/...`).
+
 Keep the data directory in its own private repository, and list `.env` in that
 repository's `.gitignore`. The tool refuses to run if the data or cache
 directory is inside its own git work tree.
