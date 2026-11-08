@@ -8,6 +8,7 @@ from geneanet_drift.feed import (
     is_stale,
     name_key,
     parse_feed,
+    parse_history_html,
     person_url,
     since,
 )
@@ -202,3 +203,63 @@ def test_only_the_first_offenders_are_listed():
     text = "\n".join(f"August {day}, 2026\n\nx" for day in range(1, 8))
     with pytest.raises(FeedError, match=r"\(and 4 more\)"):
         parse_feed(text, "example")
+
+
+@pytest.fixture
+def history(history_text):
+    return parse_history_html(history_text, "exampletree")
+
+
+def test_history_rows_skip_the_unlinked_one(history):
+    assert [e.name for e in history] == ["June Fox", "Pip Marsh", "Sam.1 Quill"]
+    assert history[0].when == datetime(2026, 10, 28, 20, 37, 23)
+
+
+def test_history_row_fields(history):
+    june, pip, sam = history
+    assert (june.birth_year, june.death_year, june.change, june.admin) == (
+        1992,
+        None,
+        "Family added",
+        "exampleowner",
+    )
+    assert (pip.birth_year, pip.admin) == (None, "exampleowner")
+    assert (sam.change, sam.admin, sam.address) == (
+        "Individual added",
+        "",
+        ("quill", "sam", "1"),
+    )
+    assert june.url == "https://gw.geneanet.org/exampletree_w?n=fox&p=june&oc=0"
+    assert june.address == ("fox", "june", "0")
+
+
+def test_history_page_without_rows_fails():
+    with pytest.raises(FeedError, match="no change-log rows"):
+        parse_history_html("<html><body></body></html>", "exampletree")
+
+
+def test_history_unreadable_time_fails(history_text):
+    broken = history_text.replace("20:37:23", "soon")
+    with pytest.raises(FeedError, match="not a date"):
+        parse_history_html(broken, "exampletree")
+
+
+def test_history_out_of_order_rows_fail(history_text):
+    swapped = history_text.replace("October 28, 2026", "January 1, 2001")
+    with pytest.raises(FeedError, match="newest first"):
+        parse_history_html(swapped, "exampletree")
+
+
+def test_history_ignores_page_content_after_the_last_row(history_text):
+    footer = "<footer>Cookies Terms Privacy</footer>"
+    padded = history_text.replace("</body>", footer + "</body>")
+    assert padded != history_text
+    assert parse_history_html(padded, "exampletree") == parse_history_html(
+        history_text, "exampletree"
+    )
+
+
+def test_history_without_person_links_fails(history_text):
+    unlinked = history_text.replace("exampletree_w", "othertree_w")
+    with pytest.raises(FeedError, match="none links to a person"):
+        parse_history_html(unlinked, "exampletree")

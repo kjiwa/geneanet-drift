@@ -62,6 +62,11 @@ class FakeGramps:
 
 
 @pytest.fixture
+def history_text() -> str:
+    return (FIXTURES / "geneanet" / "history_editing.html").read_text()
+
+
+@pytest.fixture
 def feed_text() -> str:
     return (FIXTURES / "feed.txt").read_text()
 

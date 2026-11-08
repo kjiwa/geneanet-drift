@@ -1,7 +1,8 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import urlencode
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 GENEANET_HOST = "https://gw.geneanet.org"
 TIMESTAMP_FORMAT = "%B %d, %Y %H:%M:%S"
@@ -27,6 +28,7 @@ KNOWN_CHANGES = frozenset(
     }
 )
 MAX_REPORTED = 3
+HISTORY_ROW = "gw-history-editing-entry"
 
 Line = tuple[int, str]  # 1-based line number in the pasted text, stripped text
 
@@ -44,6 +46,7 @@ class Entry:
     change: str
     admin: str
     url: str
+    address: tuple[str, str, str] | None = None  # (n, p, oc) of the row link
 
     @property
     def known(self) -> bool:
@@ -186,6 +189,74 @@ def parse_feed(text: str, tree: str) -> list[Entry]:
             problems.append(str(error))
     _raise_if_any(problems)
     _check_newest_first(entries, [lines[start][0] for start in starts])
+    return entries
+
+
+class _HistoryRows(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[tuple[int, str | None, list[Line]]] = []
+        self.inside = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == HISTORY_ROW:
+            self.rows.append((self.getpos()[0], None, []))
+            self.inside = True
+        elif tag == "a" and self.inside and self.rows[-1][1] is None:
+            href = dict(attrs).get("href")
+            if href:
+                start, _, texts = self.rows[-1]
+                self.rows[-1] = (start, href, texts)
+
+    def handle_endtag(self, tag):
+        if tag == HISTORY_ROW:
+            self.inside = False
+
+    def handle_data(self, data):
+        if self.inside and data.strip():
+            self.rows[-1][2].append((self.getpos()[0], data.strip()))
+
+
+def _link_address(href: str, tree: str) -> tuple[str, str, str] | None:
+    parts = urlsplit(href)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    if parts.path != f"/{tree}_w" or "m" in query or not {"n", "p"} <= query.keys():
+        return None
+    return (query["n"][0], query["p"][0], query.get("oc", ["0"])[0] or "0")
+
+
+def _history_entry(row: list[Line], href: str, address) -> Entry:
+    if len(row) < 5:
+        raise FeedError(
+            f"line {row[0][0] if row else '?'}: change-log row is incomplete"
+        )
+    when = _parse_when(row[0], row[1])
+    person, lifespan, change, admin = _split_body(row[2:])
+    birth, death = _parse_lifespan(lifespan[1]) if lifespan else (None, None)
+    url = urljoin(GENEANET_HOST, href)
+    return Entry(when, person[1], birth, death, change[1], admin, url, address)
+
+
+def parse_history_html(html: str, tree: str) -> list[Entry]:
+    parser = _HistoryRows()
+    parser.feed(html)
+    parser.close()
+    if not parser.rows:
+        raise FeedError("no change-log rows found; was the page in English (?lang=en)?")
+    entries: list[Entry] = []
+    numbers: list[int] = []
+    for start, href, texts in parser.rows:
+        # Unlinked rows are people renamed since; no page exists to match them to.
+        address = _link_address(href, tree) if href else None
+        if address is None:
+            continue
+        entries.append(_history_entry(texts, href, address))
+        numbers.append(start)
+    if not entries:
+        raise FeedError(
+            f"{len(parser.rows)} change-log rows found but none links to a person of {tree!r}"
+        )
+    _check_newest_first(entries, numbers)
     return entries
 
 
