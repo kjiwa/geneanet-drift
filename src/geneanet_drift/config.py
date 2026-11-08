@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -32,6 +34,10 @@ class Config:
     @property
     def pending_path(self) -> Path:
         return self.data_dir / "pending.json"
+
+    @property
+    def decisions_path(self) -> Path:
+        return self.data_dir / "decisions.json"
 
     @property
     def feed_path(self) -> Path:
@@ -154,6 +160,20 @@ def read_json(path: Path, default):
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def write_json_atomic(path: Path, value) -> None:
+    """Writes a private (0600) file that is either the old or the new content."""
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(json.dumps(value, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def end_of_day(day: date) -> datetime:
