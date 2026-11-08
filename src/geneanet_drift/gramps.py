@@ -74,6 +74,82 @@ class Snapshot:
     ]  # name key of his display name -> Gramps ID, read from citations
 
 
+@dataclass(frozen=True)
+class GrampsDate:
+    year: int | None
+    month: int | None
+    day: int | None
+    modifier: str | None
+    quality: str | None
+    text: str
+    end_year: int | None = None
+
+
+@dataclass(frozen=True)
+class GrampsEvent:
+    handle: str
+    kind: str
+    date: GrampsDate | None
+    place: str | None
+    description: str
+
+
+@dataclass(frozen=True)
+class GrampsNote:
+    handle: str
+    text: str
+
+
+@dataclass(frozen=True)
+class GrampsCitation:
+    handle: str
+    source: str
+    page: str
+    date: GrampsDate | None
+
+
+@dataclass(frozen=True)
+class GrampsMedia:
+    handle: str
+    description: str
+    path: str
+    mime: str
+
+
+@dataclass(frozen=True)
+class GrampsFamily:
+    handle: str
+    gramps_id: str
+    father: str | None
+    mother: str | None
+    children: tuple[str, ...]
+    kind: str
+    events: tuple[GrampsEvent, ...]
+
+
+@dataclass(frozen=True)
+class GrampsFullPerson:
+    handle: str
+    gramps_id: str
+    given: str
+    surname: str
+    nickname: str
+    other_names: tuple[str, ...]
+    gender: str
+    events: tuple[GrampsEvent, ...]
+    parent_families: tuple[str, ...]
+    families: tuple[str, ...]
+    notes: tuple[GrampsNote, ...]
+    citations: tuple[GrampsCitation, ...]
+    media: tuple[GrampsMedia, ...]
+
+
+@dataclass(frozen=True)
+class GrampsTree:
+    people: tuple[GrampsFullPerson, ...]
+    families: tuple[GrampsFamily, ...]
+
+
 def urllib_transport(method, url, headers, body):
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -250,4 +326,131 @@ def take_snapshot(client: GrampsClient, source_title: str) -> Snapshot:
         people,
         counts["families"],
         _geneanet_links(client, source_title, ids_by_handle),
+    )
+
+
+DATE_MODIFIERS = {1: "before", 2: "after", 3: "about", 4: "range", 5: "span", 6: "text"}
+DATE_QUALITIES = {1: "estimated", 2: "calculated"}
+OWN_ROLES = ("Primary", "Family")
+GENDERS = {0: "female", 1: "male", 2: "unknown"}
+
+
+def _label(value) -> str:
+    return value.get("string", "") if isinstance(value, dict) else value or ""
+
+
+def _surnames(name: dict) -> str:
+    return " ".join(
+        s["surname"] for s in name.get("surname_list", []) if s.get("surname")
+    )
+
+
+def _end_year(raw: dict) -> int | None:
+    dateval = raw.get("dateval") or []
+    return (dateval[6] or None) if len(dateval) > 6 else None
+
+
+def _date(raw: dict | None) -> GrampsDate | None:
+    raw = raw or {}
+    day, month, year = ((raw.get("dateval") or []) + [0, 0, 0])[:3]
+    text = raw.get("text", "")
+    if not (day or month or year or text):
+        return None
+    return GrampsDate(
+        year or None,
+        month or None,
+        day or None,
+        DATE_MODIFIERS.get(raw.get("modifier", 0)),
+        DATE_QUALITIES.get(raw.get("quality", 0)),
+        text,
+        _end_year(raw),
+    )
+
+
+def _by_handle(client: GrampsClient, path: str) -> dict[str, dict]:
+    return {raw["handle"]: raw for raw in client.get_all(path)}
+
+
+def _events(refs: list[dict], events: dict[str, GrampsEvent]):
+    return tuple(
+        events[ref["ref"]]
+        for ref in refs
+        if _label(ref.get("role", "Primary")) in OWN_ROLES
+    )
+
+
+def _event(raw: dict, places: dict[str, dict]) -> GrampsEvent:
+    place = places[raw["place"]]["name"]["value"] if raw.get("place") else None
+    return GrampsEvent(
+        raw["handle"],
+        _label(raw.get("type")),
+        _date(raw.get("date")),
+        place,
+        raw.get("description", ""),
+    )
+
+
+def _family(raw: dict, events: dict[str, GrampsEvent]) -> GrampsFamily:
+    return GrampsFamily(
+        raw["handle"],
+        raw["gramps_id"],
+        raw.get("father_handle"),
+        raw.get("mother_handle"),
+        tuple(ref["ref"] for ref in raw.get("child_ref_list", [])),
+        _label(raw.get("type")),
+        _events(raw.get("event_ref_list", []), events),
+    )
+
+
+def _full_person(raw: dict, events, notes, citations, media) -> GrampsFullPerson:
+    name = raw["primary_name"]
+    return GrampsFullPerson(
+        raw["handle"],
+        raw["gramps_id"],
+        name.get("first_name", ""),
+        _surnames(name),
+        name.get("nick", ""),
+        tuple(
+            f"{alt.get('first_name', '')} {_surnames(alt)}".strip()
+            for alt in raw.get("alternate_names", [])
+        ),
+        GENDERS.get(raw.get("gender", 2), "unknown"),
+        _events(raw.get("event_ref_list", []), events),
+        tuple(raw.get("parent_family_list", [])),
+        tuple(raw.get("family_list", [])),
+        tuple(notes[h] for h in raw.get("note_list", [])),
+        tuple(citations[h] for h in raw.get("citation_list", [])),
+        tuple(media[ref["ref"]] for ref in raw.get("media_list", [])),
+    )
+
+
+def take_tree(client: GrampsClient) -> GrampsTree:
+    places = _by_handle(client, "/api/places/")
+    sources = _by_handle(client, "/api/sources/")
+    events = {
+        h: _event(raw, places) for h, raw in _by_handle(client, "/api/events/").items()
+    }
+    notes = {
+        h: GrampsNote(h, _label(raw.get("text")))
+        for h, raw in _by_handle(client, "/api/notes/").items()
+    }
+    citations = {
+        h: GrampsCitation(
+            h,
+            sources[raw["source_handle"]]["title"],
+            raw.get("page", ""),
+            _date(raw.get("date")),
+        )
+        for h, raw in _by_handle(client, "/api/citations/").items()
+    }
+    media = {
+        h: GrampsMedia(h, raw.get("desc", ""), raw.get("path", ""), raw.get("mime", ""))
+        for h, raw in _by_handle(client, "/api/media/").items()
+    }
+    return GrampsTree(
+        tuple(
+            _full_person(raw, events, notes, citations, media)
+            for raw in client.get_all("/api/people/")
+        ),
+        tuple(_family(raw, events) for raw in client.get_all("/api/families/")),
     )

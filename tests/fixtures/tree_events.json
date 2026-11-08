@@ -1,0 +1,6 @@
+[
+  {"handle": "e1", "type": "Birth", "place": "pl1", "description": "", "date": {"dateval": [3, 5, 1920, false], "modifier": 0, "quality": 0, "text": ""}},
+  {"handle": "e2", "type": "Death", "place": "", "description": "", "date": {"dateval": [0, 0, 1990, false], "modifier": 3, "quality": 0, "text": ""}},
+  {"handle": "e3", "type": "Marriage", "place": "pl1", "description": "", "date": {"dateval": [0, 6, 1945, false], "modifier": 1, "quality": 1, "text": ""}},
+  {"handle": "e4", "type": "Baptism", "place": "", "description": "Parish register", "date": {"dateval": [0, 0, 1920, false], "modifier": 0, "quality": 0, "text": ""}}
+]

@@ -1,0 +1,12 @@
+[
+  {"handle": "p1", "gramps_id": "I0101", "gender": 0,
+   "primary_name": {"first_name": "Marenka", "nick": "Mari", "surname_list": [{"surname": "Thistledown"}]},
+   "alternate_names": [{"first_name": "Marenka", "surname_list": [{"surname": "Brindle"}]}, {"first_name": "Renka", "surname_list": []}],
+   "event_ref_list": [{"ref": "e1", "role": "Primary"}, {"ref": "e2"}, {"ref": "e4"}],
+   "parent_family_list": ["f1"], "family_list": ["f2", "f3"],
+   "note_list": ["n1"], "citation_list": ["c1"], "media_list": [{"ref": "m1"}]},
+  {"handle": "p2", "gramps_id": "I0102", "gender": 1, "primary_name": {"first_name": "Oswin", "surname_list": [{"surname": "Thistledown"}]}, "event_ref_list": [], "family_list": ["f1"]},
+  {"handle": "p3", "gramps_id": "I0103", "gender": 0, "primary_name": {"first_name": "Ilsabet", "surname_list": [{"surname": "Thistledown"}]}, "event_ref_list": [], "family_list": ["f1"]},
+  {"handle": "p4", "gramps_id": "I0104", "gender": 1, "primary_name": {"first_name": "Corvin", "surname_list": [{"surname": "Brindle"}]}, "event_ref_list": [], "family_list": ["f2"]},
+  {"handle": "p5", "gramps_id": "I0105", "gender": 2, "primary_name": {"first_name": "Dunmar", "surname_list": [{"surname": "Vell"}]}, "event_ref_list": [], "family_list": ["f3"]}
+]
