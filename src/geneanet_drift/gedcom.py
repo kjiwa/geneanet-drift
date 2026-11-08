@@ -212,7 +212,7 @@ def _media_lines(person: Person) -> list[str]:
         lines.extend([_line(1, "OBJE"), *_lines(2, "FILE", path)])
         lines.append(_line(3, "FORM", path.rsplit(".", 1)[1]))
         if media.title:
-            lines.extend(_lines(2, "TITL", media.title))
+            lines.extend(_lines(3, "TITL", media.title))
     return lines
 
 
@@ -255,10 +255,16 @@ def _union_lines(union: Union) -> list[str]:
     return lines
 
 
+def _partner_tags(ordered: list[int], people: dict[int, Person]) -> list[str]:
+    if len(ordered) == 1:
+        return ["WIFE" if people[ordered[0]].sex == "female" else "HUSB"]
+    return ["HUSB", "WIFE"][: len(ordered)]
+
+
 def _family_lines(key: int, family: Family, people: dict[int, Person]) -> list[str]:
     ordered = sorted(family.partners, key=lambda k: (SEX_ORDER[people[k].sex], k))
     lines = [_line(0, "FAM", xref=_family_xref(key))]
-    for tag, partner in zip(("HUSB", "WIFE"), ordered, strict=False):
+    for tag, partner in zip(_partner_tags(ordered, people), ordered, strict=True):
         lines.append(_line(1, tag, _person_xref(partner)))
     lines.extend(_line(1, "CHIL", _person_xref(child)) for child in family.children)
     lines.extend(_union_lines(family.union))
@@ -371,7 +377,11 @@ def main(argv: list[str]) -> int:
     except (ConfigError, CaptureError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    args.out.write_text(result.text, encoding="utf-8", newline="\n")
+    try:
+        args.out.write_text(result.text, encoding="utf-8", newline="\n")
+    except OSError as error:
+        print(f"error: cannot write {args.out}: {error}", file=sys.stderr)
+        return 1
     print(
         f"Wrote {args.out}: {result.people} people, {result.families} families, "
         f"{result.skipped} placeholder links skipped."

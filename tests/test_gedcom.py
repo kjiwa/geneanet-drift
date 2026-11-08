@@ -120,7 +120,7 @@ def test_fixture_tree_structure_and_cross_references(tree):
 
 def test_unmarried_union_is_an_event_with_a_note(tree):
     family = body(export_gedcom(tree, TREE).text, "@F2@")
-    assert family[0] == "1 HUSB @I5@"
+    assert family[0] == "1 WIFE @I5@"
     assert "1 EVEN" in family and "2 TYPE Relationship" in family
     assert "1 NOTE Relationship (not a marriage)" in family
 
@@ -185,7 +185,7 @@ def test_names_notes_sources_media_and_url():
     assert "3 TEXT Birth: Parish book" in lines
     assert "2 PAGE https://gw.geneanet.org/exampletree_w?n=quill&p=ada&oc=2" in lines
     assert "2 FILE media/person-1/1001-Harbor-1975.jpg" in lines
-    assert "3 FORM jpg" in lines and "2 TITL Harbor, 1975" in lines
+    assert "3 FORM jpg" in lines and "3 TITL Harbor, 1975" in lines
 
 
 def test_long_values_split_with_conc_and_cont_and_roundtrip():
@@ -218,3 +218,24 @@ def test_cli_writes_file_and_reports_counts(tmp_path, capsys):
     assert main([*args, "--out", str(out)]) == 0
     assert "5 people, 2 families, 1 placeholder" in capsys.readouterr().out
     assert out.read_text(encoding="utf-8").endswith("0 TRLR\n")
+
+
+def test_unwritable_output_is_reported(tmp_path, capsys):
+    shutil.copytree(GENEANET / "tree", tmp_path / "pages")
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "config.toml").write_text(
+        f'tree = "{TREE}"\ngramps_url = "http://g.test"\n'
+    )
+    args = ["--data-dir", str(data), "--pages", str(tmp_path / "pages")]
+    assert main([*args, "--out", str(tmp_path / "missing" / "x.ged")]) == 1
+    assert "cannot write" in capsys.readouterr().err
+
+
+def test_lone_female_partner_is_the_wife():
+    from geneanet_drift.gedcom import _partner_tags
+
+    people = {1: person(key=1, sex="female"), 2: person(key=2, sex="male")}
+    assert _partner_tags([1], people) == ["WIFE"]
+    assert _partner_tags([2], people) == ["HUSB"]
+    assert _partner_tags([2, 1], people) == ["HUSB", "WIFE"]
