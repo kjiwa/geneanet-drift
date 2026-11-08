@@ -25,8 +25,8 @@ difference in a local web page, and writes the accepted ones to Gramps.
 Links between his people and yours are stored in Gramps itself: a Citation
 under the Source `Geneanet - <tree> family tree` whose `page` is his display name
 for the person. The private data directory holds `decisions.json`,
-`applied.json`, `backups/`, `state.json` (the last sync) and an optional
-hand-written `negatives.json` of rejected pairings.
+`applied.json`, `backups/` and an optional hand-written `negatives.json` of
+rejected pairings.
 
 ## Install
 
@@ -94,14 +94,17 @@ Run these in order. `DIR` is the capture folder, by default
 `~/Downloads/geneanet-drift/<tree>/pages`.
 
 1. Capture. `geneanet-drift` (the same as `geneanet-drift capture-status`) reads
-   the saved change log `DIR/history-editing.html` and lists every person
-   changed since the last sync whose page is missing or older than the change
-   (file time against the change time), each with the address to open. Open
-   those pages with the extension on, rerun to check, and repeat until nothing
-   is left. Options: `--pages DIR`, `--since YYYY-MM-DD` to look back past the
-   last sync, and `--feed FILE` to read a pasted copy of the change log (the
-   page in English, select-all, paste into a plain-text file) instead of the
-   saved page.
+   the saved change log `DIR/history-editing.html` and lists every person in it
+   whose captured page is missing or older than their newest change (file time
+   against the change time), each with the address to open. No sync state is
+   kept: capturing a page is what clears it from the list. Geneanet's times are
+   compared as written against your local file times, so a change within a few
+   hours of a capture may need a manual check. Open those pages with the
+   extension on, rerun to check, and repeat until nothing is left. Options:
+   `--pages DIR`, `--since YYYY-MM-DD` to list only changes from that date on,
+   and `--feed FILE` to read a pasted copy of the change log (the page in
+   English, select-all, paste into a plain-text file) instead of the saved
+   page.
 2. Snapshot. `geneanet-drift snapshot --out FILE` saves the Gramps tree (read
    user) to a JSON file outside this repository.
 3. Review. `geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves
@@ -116,8 +119,7 @@ Run these in order. `DIR` is the capture folder, by default
    `<data dir>/backups/` through the read user and stops if that fails. Each
    write is logged to `<data dir>/applied.json` with its created and updated
    objects and transaction ids; a rerun skips logged steps and stops, without
-   writing, if a logged object has since changed. After a successful apply the
-   newest change in `DIR/history-editing.html` is recorded as the last sync.
+   writing, if a logged object has since changed.
    `geneanet-drift undo --last N` reverts the newest N logged steps, newest
    first.
 5. GEDCOM, optionally. `geneanet-drift gedcom --pages DIR --out FILE` exports

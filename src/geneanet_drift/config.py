@@ -25,10 +25,6 @@ class Config:
     warnings: tuple[str, ...] = ()
 
     @property
-    def state_path(self) -> Path:
-        return self.data_dir / "state.json"
-
-    @property
     def negatives_path(self) -> Path:
         return self.data_dir / "negatives.json"
 
@@ -43,11 +39,6 @@ class Config:
     @property
     def backups_dir(self) -> Path:
         return self.data_dir / "backups"
-
-
-@dataclass(frozen=True)
-class State:
-    last_sync: datetime | None = None
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -160,26 +151,3 @@ def write_json_atomic(path: Path, value) -> None:
 
 def end_of_day(day: date) -> datetime:
     return datetime.combine(day, time.max)
-
-
-def _parse_moment(raw: str) -> datetime:
-    try:
-        return end_of_day(date.fromisoformat(raw))
-    except ValueError:
-        return datetime.fromisoformat(raw)
-
-
-def _read_moment(raw: str | None) -> datetime | None:
-    return _parse_moment(raw) if raw else None
-
-
-def _iso(moment: datetime | None) -> str | None:
-    return moment.isoformat() if moment else None
-
-
-def load_state(path: Path) -> State:
-    return State(_read_moment(read_json(path, {}).get("last_sync")))
-
-
-def save_state(path: Path, state: State) -> None:
-    write_json(path, {"last_sync": _iso(state.last_sync)})

@@ -15,22 +15,20 @@ from geneanet_drift.apply import (
     newest_steps,
     preview,
     read_log,
+    source_title,
     undo,
 )
 from geneanet_drift.capture import CaptureError, load_tree, page_times
 from geneanet_drift.config import (
     Config,
     ConfigError,
-    State,
     end_of_day,
     find_repo_root,
     load_config,
-    load_state,
-    save_state,
 )
 from geneanet_drift.decisions import load_decisions
 from geneanet_drift.diff import diff_people
-from geneanet_drift.feed import FeedError, since
+from geneanet_drift.feed import Entry, FeedError, since
 from geneanet_drift.gramps import (
     GrampsClient,
     GrampsError,
@@ -40,12 +38,10 @@ from geneanet_drift.gramps import (
 )
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import match_people
-from geneanet_drift.review import source_title
 from geneanet_drift.review_data import load_review
 from geneanet_drift.server import serve
 from geneanet_drift.status import (
     Visit,
-    has_history_page,
     load_change_log,
     pages_to_visit,
 )
@@ -66,10 +62,8 @@ def default_pages(tree: str) -> Path:
     return Path.home() / PAGES_PARENT / tree / "pages"
 
 
-def _cutoff(state: State, since_day: date | None) -> datetime | None:
-    if since_day is None:
-        return state.last_sync
-    return end_of_day(since_day - timedelta(days=1))
+def _cutoff(since_day: date | None) -> datetime | None:
+    return end_of_day(since_day - timedelta(days=1)) if since_day else None
 
 
 def _report_visits(say: Say, visits: list[Visit]) -> None:
@@ -99,35 +93,27 @@ def _report_next(say: Say, pages: Path) -> None:
     say("    --out FILE")
 
 
+def _report_header(say: Say, entries: list[Entry], since_day: date | None) -> None:
+    where = f"from {since_day} on" if since_day else "in the whole log"
+    say(f"Changes {where}:")
+    say(f"  {len(since(entries, _cutoff(since_day)))} of {len(entries)} log rows.")
+    say("Times are compared as Geneanet wrote")
+    say("them against local file times, so a")
+    say("change within a few hours of a")
+    say("capture may need a manual check.")
+    say("")
+
+
 def capture_status(
     cfg: Config, pages: Path, feed: Path | None, since_day: date | None, say: Say
 ) -> int:
-    state = load_state(cfg.state_path)
-    cutoff = _cutoff(state, since_day)
     entries = load_change_log(pages, feed, cfg.tree)
-    visits = pages_to_visit(entries, page_times(pages, cfg.tree), cutoff)
-    after = _moment(cutoff) if cutoff else "the start of the log"
-    say(f"Changes after {after}:")
-    say(f"  {len(since(entries, cutoff))} of {len(entries)} log rows.")
-    say("")
+    times = page_times(pages, cfg.tree, lambda note: say(f"Warning: {note}"))
+    visits = pages_to_visit(entries, times, _cutoff(since_day))
+    _report_header(say, entries, since_day)
     _report_visits(say, visits)
     _report_next(say, pages)
     return 0
-
-
-def record_sync(cfg: Config, pages: Path, say: Say) -> None:
-    if not has_history_page(pages):
-        say(f"No change log in {pages}; last sync not recorded.")
-        return
-    try:
-        entries = load_change_log(pages, None, cfg.tree)
-    except FeedError as error:
-        say(f"Last sync not recorded: {error}")
-        return
-    last_sync = load_state(cfg.state_path).last_sync
-    covered = max(max(e.when for e in entries), last_sync or datetime.min)
-    save_state(cfg.state_path, State(covered))
-    say(f"Last sync: {_moment(covered)}.")
 
 
 def _login(
@@ -216,7 +202,6 @@ def apply_decisions(
     say(f"Backup: {backup(reader, cfg.backups_dir, now)}")
     written = apply(plan, _connect_writer(cfg, ask_secret), cfg.applied_path, say)
     say(f"Applied {written} steps; see {cfg.applied_path}.")
-    record_sync(cfg, pages, say)
     return 0
 
 
@@ -274,8 +259,6 @@ def _positive(text: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["gedcom"]:
-        return gedcom.main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="geneanet-drift",
         description="Compare a captured Geneanet tree with a Gramps tree.",
@@ -298,7 +281,12 @@ def main(argv: list[str] | None = None) -> int:
         "--since",
         type=date.fromisoformat,
         metavar="YYYY-MM-DD",
-        help="list changes from this date on, instead of after the last sync",
+        help="list only changes from this date on",
+    )
+    commands.add_parser(
+        "gedcom",
+        add_help=False,
+        help="export the captured tree as GEDCOM (see `gedcom -h`)",
     )
     snapshot = commands.add_parser("snapshot", help="save the Gramps tree to a file")
     snapshot.add_argument("--out", type=Path, required=True, help="JSON file to write")
@@ -322,7 +310,12 @@ def main(argv: list[str] | None = None) -> int:
     undo_command.add_argument(
         "--last", type=_positive, required=True, help="steps to revert"
     )
-    args = parser.parse_args(argv)
+    args, rest = parser.parse_known_args(argv)
+    if args.command == "gedcom":
+        carried = ["--data-dir", args.data_dir] if args.data_dir else []
+        return gedcom.main([*carried, *rest])
+    if rest:
+        parser.error(f"unrecognized arguments: {' '.join(rest)}")
     if args.command is None:
         args = parser.parse_args([*argv, "capture-status"])
     try:

@@ -5,9 +5,9 @@ from datetime import date, datetime
 
 import pytest
 
-from geneanet_drift.capture import Address, page_times
-from geneanet_drift.config import State, end_of_day, save_state
-from geneanet_drift.feed import FeedError
+from geneanet_drift.capture import Address, page_times, parse_person
+from geneanet_drift.feed import Entry, FeedError
+from geneanet_drift.status import entry_address
 from geneanet_drift.wizard import capture_status, main
 from tests.conftest import FIXTURES
 
@@ -66,7 +66,6 @@ def test_visit_list_has_missing_and_older_pages_with_urls(tcfg, pages):
     stamp(pages / "person-1.html", datetime(2026, 10, 1, 9, 0, 0))
     stamp(pages / "person-2.html", datetime(2026, 10, 25, 9, 0, 0))
     write_history(pages, ADA, BRAM, ZED, OLD)
-    save_state(tcfg.state_path, State(end_of_day(date(2026, 4, 2))))
     code, said = report(tcfg, pages)
     text = "\n".join(said)
     assert code == 0
@@ -78,20 +77,24 @@ def test_visit_list_has_missing_and_older_pages_with_urls(tcfg, pages):
     assert "saved 2026-10-01 09:00:00" in text
 
 
-def test_only_changes_after_the_last_sync_count(tcfg, pages):
+def test_since_is_the_manual_cutoff(tcfg, pages):
     stamp(pages / "person-1.html", datetime(2026, 10, 1))
     write_history(pages, ADA, ZED)
-    save_state(tcfg.state_path, State(datetime(2026, 10, 15)))
-    _, said = report(tcfg, pages)
+    _, said = report(tcfg, pages, since=date(2026, 10, 15))
     text = "\n".join(said)
     assert "Ada Quill" in text and "Zed Absent" not in text
-
-
-def test_since_overrides_the_last_sync(tcfg, pages):
-    write_history(pages, ADA, ZED)
-    save_state(tcfg.state_path, State(datetime(2026, 10, 15)))
-    _, said = report(tcfg, pages, since=date(2026, 10, 1))
+    assert "from 2026-10-15" in text
+    _, said = report(tcfg, pages)
     assert "Zed Absent" in "\n".join(said)
+
+
+def test_header_states_the_timezone_caveat(tcfg, pages):
+    write_history(pages, ADA)
+    _, said = report(tcfg, pages)
+    text = " ".join(" ".join(said).split())
+    assert "as Geneanet wrote them" in text
+    assert "local file times" in text
+    assert "few hours" in text
 
 
 def test_nothing_to_visit_still_prints_the_next_commands(tcfg, pages):
@@ -144,3 +147,49 @@ def test_no_subcommand_runs_capture_status_on_the_default_pages(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     assert main(["--data-dir", str(cfg.data_dir)]) == 0
     assert "Ada Quill" in capsys.readouterr().out
+
+
+def entry(url="", address=None) -> Entry:
+    return Entry(datetime(2026, 10, 1), "A B", None, None, "x", "", url, address)
+
+
+def test_entry_address_reuses_the_row_address_when_present():
+    assert entry(address=("quill", "ada", "2")).url == ""
+    assert entry_address(entry(address=("quill", "ada", "2"))) == Address(
+        "quill", "ada", 2
+    )
+
+
+def test_entry_address_falls_back_to_the_url():
+    url = "https://gw.geneanet.org/exampletree_w?n=quill&p=ada&oc=1"
+    assert entry_address(entry(url)) == Address("quill", "ada", 1)
+    assert entry_address(entry("")) is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [entry(address=("quill", "ada", "x")), entry("https://h/t_w?n=q&p=a&oc=x")],
+)
+def test_entry_address_with_a_non_numeric_oc_is_a_feed_error(bad):
+    with pytest.raises(FeedError, match="occurrence"):
+        entry_address(bad)
+
+
+def test_canonical_address_read_cheaply_matches_the_full_parse(pages):
+    for path in pages.glob("person-*.html"):
+        expected = parse_person(path.read_text(encoding="utf-8"), TREE).address
+        stamp(path, datetime(2026, 10, 1))
+        assert expected in page_times(pages, TREE)
+
+
+def test_an_unreadable_page_is_skipped_with_a_note(pages):
+    broken = pages / "person-1.html"
+    broken.chmod(0)
+    notes: list[str] = []
+    try:
+        times = page_times(pages, TREE, notes.append)
+    finally:
+        broken.chmod(0o644)
+    assert Address("quill", "ada", 0) not in times
+    assert Address("reed", "bram", 0) in times
+    assert len(notes) == 1 and "person-1.html" in notes[0]

@@ -26,7 +26,11 @@ from geneanet_drift.gramps import (
     References,
 )
 from geneanet_drift.match_tree import LINKED, Match, display_name
-from geneanet_drift.review import source_title
+
+
+def source_title(tree: str) -> str:
+    return f"Geneanet - {tree} family tree"
+
 
 PHASE_SETUP, PHASE_PLACES, PHASE_MEDIA, PHASE_PEOPLE, PHASE_EDITS = range(5)
 OBJECTS = "/api/objects/"

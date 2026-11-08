@@ -1,8 +1,9 @@
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import NamedTuple
@@ -221,6 +222,10 @@ def _address(query: dict[str, str]) -> Address | None:
     return Address(query.get("n", ""), query.get("p", ""), int(query.get("oc") or 0))
 
 
+def address_from_url(href: str) -> Address | None:
+    return _address(_query(href))
+
+
 def _person_ref(node: Node, tree: str) -> Ref | None:
     query = _tree_link(node, tree)
     if query is None or "m" in query:
@@ -325,7 +330,7 @@ def _h1_sex(h1: Node) -> str:
 def _canonical(root: Node) -> Address | None:
     for link in root.elements():
         if link.tag == "link" and link.attrs.get("rel") == "canonical":
-            return _address(_query(link.attrs.get("href", "")))
+            return address_from_url(link.attrs.get("href", ""))
     raise CaptureError("no canonical link")
 
 
@@ -655,15 +660,28 @@ def load_tree(pages_dir: Path, tree: str) -> dict[int, Person]:
     return linked
 
 
-def page_times(pages_dir: Path, tree: str) -> dict[Address, datetime]:
+CANONICAL_LINK = re.compile(r"<link\b[^>]*\brel=[\"']canonical[\"'][^>]*>")
+HREF = re.compile(r"\bhref=[\"']([^\"']*)[\"']")
+
+
+def _canonical_address(html: str) -> Address | None:
+    link = CANONICAL_LINK.search(html)
+    href = HREF.search(link.group(0)) if link else None
+    return address_from_url(unescape(href.group(1))) if href else None
+
+
+def page_times(
+    pages_dir: Path, tree: str, note: Callable[[str], None] = lambda _: None
+) -> dict[Address, datetime]:
     """When each captured page was last saved, by the address its page names."""
     times: dict[Address, datetime] = {}
     for path in _page_paths(pages_dir):
         try:
-            address = parse_person(path.read_text(encoding="utf-8"), tree).address
-        except (CaptureError, KeyError, TypeError, ValueError):
+            address = _canonical_address(path.read_text(encoding="utf-8"))
+            saved = datetime.fromtimestamp(path.stat().st_mtime)
+        except (OSError, ValueError) as error:
+            note(f"skipped {path.name}: {error}")
             continue
-        saved = datetime.fromtimestamp(path.stat().st_mtime)
         if address is not None and saved > times.get(address, datetime.min):
             times[address] = saved
     return times

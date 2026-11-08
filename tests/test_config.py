@@ -1,18 +1,13 @@
-from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
 from geneanet_drift.config import (
     ConfigError,
-    State,
-    end_of_day,
     ensure_outside_repo,
     find_repo_root,
     load_config,
-    load_state,
     read_env_file,
-    save_state,
 )
 
 CONFIG = 'tree = "example"\ngramps_url = "https://gramps.test/"\n'
@@ -133,21 +128,6 @@ def test_password_stays_out_of_the_repr(tmp_path):
 def test_missing_config_names_the_file(tmp_path):
     with pytest.raises(ConfigError, match="config.toml"):
         load_config(str(tmp_path / "empty"), {}, repo_root=tmp_path / "no-repo")
-
-
-def test_state_round_trips_and_defaults_empty(tmp_path):
-    path = tmp_path / "state.json"
-    assert load_state(path) == State()
-    moment = datetime(2026, 8, 25, 11, 25, 15)
-    save_state(path, State(moment))
-    assert load_state(path) == State(moment)
-
-
-def test_a_date_only_last_sync_means_the_end_of_that_day(tmp_path):
-    path = tmp_path / "state.json"
-    path.write_text('{"last_sync": "2026-04-02", "individuals": 399}')
-    assert load_state(path) == State(end_of_day(date(2026, 4, 2)))
-    assert load_state(path).last_sync > datetime(2026, 4, 2, 23, 59, 58)
 
 
 def test_decisions_live_in_the_data_dir(cfg):

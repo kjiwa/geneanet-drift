@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
-from geneanet_drift.capture import Address
+from geneanet_drift.capture import Address, address_from_url
 from geneanet_drift.feed import (
     Entry,
     FeedError,
@@ -40,10 +39,15 @@ def load_change_log(pages: Path, feed: Path | None, tree: str) -> list[Entry]:
 
 
 def entry_address(entry: Entry) -> Address | None:
-    query = {k: v[0] for k, v in parse_qs(urlsplit(entry.url).query).items()}
-    if not query.get("n") and not query.get("p"):
-        return None
-    return Address(query.get("n", ""), query.get("p", ""), int(query.get("oc") or 0))
+    try:
+        if entry.address:
+            surname, given, occurrence = entry.address
+            return Address(surname, given, int(occurrence))
+        return address_from_url(entry.url)
+    except ValueError as error:
+        raise FeedError(
+            f"{entry.name}: the occurrence number in its link is not a number"
+        ) from error
 
 
 def pages_to_visit(

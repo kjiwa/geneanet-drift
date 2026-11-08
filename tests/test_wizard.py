@@ -6,9 +6,6 @@ import pytest
 from geneanet_drift.apply import read_log
 from geneanet_drift.config import (
     ConfigError,
-    State,
-    load_state,
-    save_state,
     write_json,
 )
 from geneanet_drift.decisions import ACCEPTED, Decision, save_decisions
@@ -160,15 +157,6 @@ def accepted(cfg, monkeypatch):
 
 
 NOW = datetime(2026, 11, 8, 9, 0).astimezone()
-HISTORY_ROWS = """<gw-history-editing-entry><div>
-<div><b>{day}</b><div>{time}</div></div>
-<div><a href="/example_w?n=pellow&amp;p=ardeth&amp;oc=0">Ardeth Pellow</a></div>
-<div><div>Individual updated</div><div>admin</div></div></div></gw-history-editing-entry>"""
-
-
-def history_page(*moments: tuple[str, str]) -> str:
-    rows = "".join(HISTORY_ROWS.format(day=d, time=t) for d, t in moments)
-    return f"<html><body>{rows}</body></html>"
 
 
 def test_apply_shows_the_plan_then_backs_up_before_writing(cfg, tmp_path, accepted):
@@ -183,48 +171,25 @@ def test_apply_shows_the_plan_then_backs_up_before_writing(cfg, tmp_path, accept
         apply_decisions(cfg, tmp_path, lambda p: "apply 3", None, said.append, NOW) == 0
     )
     assert accepted == ["backup", "apply"]
-    assert any(line.startswith("Applied 3 steps") for line in said)
+    assert said[-1].startswith("Applied 3 steps")
 
 
-def test_a_successful_apply_records_the_newest_change_logged(cfg, tmp_path, accepted):
-    (tmp_path / "history-editing.html").write_text(
-        history_page(("October 28, 2026", "20:37:23"), ("March 3, 2026", "08:00:00"))
-    )
-    said: list[str] = []
-    assert (
-        apply_decisions(cfg, tmp_path, lambda p: "apply 3", None, said.append, NOW) == 0
-    )
-    assert load_state(cfg.state_path) == State(datetime(2026, 10, 28, 20, 37, 23))
-    assert said[-1] == "Last sync: 2026-10-28 20:37:23."
-
-
-def test_apply_never_moves_last_sync_backwards(cfg, tmp_path, accepted):
-    save_state(cfg.state_path, State(datetime(2027, 1, 1)))
-    (tmp_path / "history-editing.html").write_text(
-        history_page(("October 28, 2026", "20:37:23"))
-    )
-    apply_decisions(cfg, tmp_path, lambda p: "apply 3", None, [].append, NOW)
-    assert load_state(cfg.state_path) == State(datetime(2027, 1, 1))
-
-
-def test_apply_without_a_change_log_applies_but_records_nothing(
-    cfg, tmp_path, accepted
+def test_gedcom_is_a_listed_subcommand_that_passes_its_arguments_on(
+    cfg, tmp_path, monkeypatch, capsys
 ):
-    said: list[str] = []
-    assert (
-        apply_decisions(cfg, tmp_path, lambda p: "apply 3", None, said.append, NOW) == 0
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "geneanet_drift.wizard.gedcom.main", lambda a: seen.append(a) or 0
     )
-    assert accepted == ["backup", "apply"]
-    assert not cfg.state_path.exists()
-    assert "last sync not recorded" in said[-1]
-
-
-def test_a_declined_or_empty_apply_records_nothing(cfg, tmp_path, accepted):
-    (tmp_path / "history-editing.html").write_text(
-        history_page(("October 28, 2026", "20:37:23"))
-    )
-    apply_decisions(cfg, tmp_path, lambda p: "no", None, [].append, NOW)
-    assert not cfg.state_path.exists()
+    assert main(["gedcom", "--pages", "P", "--out", "O"]) == 0
+    assert main(["--data-dir", "D", "gedcom", "--pages", "P", "--out", "O"]) == 0
+    assert seen == [
+        ["--pages", "P", "--out", "O"],
+        ["--data-dir", "D", "--pages", "P", "--out", "O"],
+    ]
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "gedcom" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("last", ["0", "-1", "x"])
