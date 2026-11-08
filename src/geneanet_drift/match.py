@@ -214,7 +214,7 @@ def _resolve_cluster(
     return Cluster(tuple(resolutions), anchor, relevant)
 
 
-def _year_verdict(item: WorkItem, person: GrampsPerson) -> Verdict:
+def year_verdict(item: WorkItem, person: GrampsPerson) -> Verdict:
     pairs = (
         ("birth", item.birth_year, person.birth_year),
         ("death", item.death_year, person.death_year),
@@ -233,7 +233,7 @@ def _year_verdict(item: WorkItem, person: GrampsPerson) -> Verdict:
     return Verdict(person, "; ".join(agree), "; ".join(conflict))
 
 
-def _narrow(verdicts: list[Verdict]) -> list[Verdict]:
+def narrow(verdicts: list[Verdict]) -> list[Verdict]:
     agreeing = [v for v in verdicts if v.agree and not v.conflict]
     if agreeing:
         return agreeing
@@ -270,7 +270,7 @@ def _resolve_unknown(
     ]
     if not candidates:
         return Resolution(item, NONE, "no name match in Gramps")
-    pool = _narrow([_year_verdict(item, p) for p in candidates])
+    pool = narrow([year_verdict(item, p) for p in candidates])
     if len(pool) > 1:
         return Resolution(
             item, AMBIGUOUS, "several name matches", tuple(v.person for v in pool)

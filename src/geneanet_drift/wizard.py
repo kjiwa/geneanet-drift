@@ -14,6 +14,7 @@ from geneanet_drift.config import (
     Run,
     State,
     end_of_day,
+    find_repo_root,
     load_config,
     load_run,
     load_state,
@@ -28,7 +29,13 @@ from geneanet_drift.feed import (
     parse_feed,
     since,
 )
-from geneanet_drift.gramps import GrampsClient, GrampsError, Snapshot, take_snapshot
+from geneanet_drift.gramps import (
+    GrampsClient,
+    GrampsError,
+    Snapshot,
+    take_snapshot,
+    take_tree,
+)
 from geneanet_drift.match import (
     Cluster,
     Resolution,
@@ -44,6 +51,7 @@ from geneanet_drift.match import (
     work_items,
 )
 from geneanet_drift.review import compare_target, render, source_title, unticked
+from geneanet_drift.tree_file import write_tree
 
 DEFAULT_WINDOW = date(2023, 7, 15)
 SELECT_ALL = "Cmd+A" if sys.platform == "darwin" else "Ctrl+A"
@@ -311,6 +319,27 @@ def _connect(cfg: Config, ask_secret: AskSecret) -> GrampsClient:
     return GrampsClient(cfg.gramps_url, cfg.gramps_user, password)
 
 
+def _check_snapshot_target(out: Path) -> None:
+    repo_root = find_repo_root(Path(__file__).resolve().parent)
+    if repo_root is not None and out.resolve().is_relative_to(repo_root.resolve()):
+        raise ConfigError(
+            f"--out {out} is inside this tool's own git work tree ({repo_root})"
+        )
+    if not out.parent.is_dir():
+        raise ConfigError(f"--out directory {out.parent} does not exist")
+
+
+def snapshot_tree(cfg: Config, out: Path, ask_secret: AskSecret, say: Say) -> int:
+    _check_snapshot_target(out)
+    client = _connect(cfg, ask_secret)
+    tree = take_tree(client)
+    for warning in client.role_warnings():
+        say(f"Warning: {warning}.")
+    write_tree(out, tree)
+    say(f"Wrote {len(tree.people)} people, {len(tree.families)} families to {out}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["gedcom"]:
@@ -332,11 +361,16 @@ def main(argv: list[str] | None = None) -> int:
         help="review changes from this date on, instead of after the last sync",
     )
     parser.add_argument("--feed", type=Path, help="read the change log from this file")
+    commands = parser.add_subparsers(dest="command")
+    snapshot = commands.add_parser("snapshot", help="save the Gramps tree to a file")
+    snapshot.add_argument("--out", type=Path, required=True, help="JSON file to write")
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.data_dir, os.environ)
         for warning in cfg.warnings:
             print(f"Warning: {warning}.")
+        if args.command == "snapshot":
+            return snapshot_tree(cfg, args.out, getpass.getpass, print)
         if args.done:
             return finish(cfg, input, print)
         client = _connect(cfg, getpass.getpass)

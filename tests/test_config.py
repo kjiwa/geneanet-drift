@@ -175,3 +175,7 @@ def test_run_round_trips_and_defaults_empty(tmp_path):
     run = Run(date(2023, 7, 15), {"tariq zorvane": "I0001"}, datetime(2026, 8, 25, 16))
     save_run(path, run)
     assert load_run(path) == run
+
+
+def test_decisions_live_in_the_data_dir(cfg):
+    assert cfg.decisions_path == cfg.data_dir / "decisions.json"
