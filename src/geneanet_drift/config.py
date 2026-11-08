@@ -21,6 +21,8 @@ class Config:
     cache_dir: Path
     gramps_user: str | None = None
     gramps_password: str | None = field(default=None, repr=False)
+    gramps_write_user: str | None = None
+    gramps_write_password: str | None = field(default=None, repr=False)
     warnings: tuple[str, ...] = ()
 
     @property
@@ -38,6 +40,14 @@ class Config:
     @property
     def decisions_path(self) -> Path:
         return self.data_dir / "decisions.json"
+
+    @property
+    def applied_path(self) -> Path:
+        return self.data_dir / "applied.json"
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.data_dir / "backups"
 
     @property
     def feed_path(self) -> Path:
@@ -150,6 +160,8 @@ def load_config(
         cache_dir=cache_dir,
         gramps_user=env.get("GRAMPS_USER") or raw.get("gramps_user"),
         gramps_password=env.get("GRAMPS_PASSWORD"),
+        gramps_write_user=env.get("GRAMPS_WRITE_USER") or raw.get("gramps_write_user"),
+        gramps_write_password=env.get("GRAMPS_WRITE_PASSWORD"),
         warnings=_env_file_warnings(env_path),
     )
 

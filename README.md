@@ -6,10 +6,11 @@ want to fold the changes back in by hand.
 
 ## What it does and does not do
 
-- It never writes to Gramps. It reads through the Gramps Web API with GET
-  requests only. Give it a Gramps user with no write permissions that can still
-  view private records (`ViewPrivate`); it refuses a user that cannot, because
-  the snapshot would silently omit those people.
+- Reading is GET-only. Give the read user no write permissions but
+  `ViewPrivate`; it refuses a user that cannot view private records, because
+  the snapshot would silently omit those people. Only `geneanet-drift apply` and
+  `undo` write, as a separate Editor user that must hold `AddObject` and
+  `EditObject` and nothing beyond the Editor role.
 - The Python tool never contacts Geneanet. Geneanet's terms prohibit automatic
   access, so you copy the change-log page by hand; the wizard prints each step
   and echoes what it parsed before trusting it. The optional browser extension
@@ -66,6 +67,8 @@ The data directory holds `config.toml`, `.env` and the tool's state. Point
 | Gramps URL | `GRAMPS_URL` | yes | `gramps_url` | no |
 | Gramps user | `GRAMPS_USER` | yes | `gramps_user` | no |
 | Gramps password | `GRAMPS_PASSWORD` | yes | never | yes |
+| Gramps write user (Editor role, `apply` and `undo` only) | `GRAMPS_WRITE_USER` | yes | `gramps_write_user` | no |
+| Gramps write password | `GRAMPS_WRITE_PASSWORD` | yes | never | yes |
 
 Within a row, the process environment beats `<data dir>/.env`, which beats
 `config.toml`. With no terminal and no password set, the tool exits with an
@@ -108,9 +111,17 @@ the capture folder of the tree (`media/person-<n>/...`).
 on `127.0.0.1` (default: a free port) and prints its URL. It compares the captured
 pages with the snapshot; accept, edit or reject each change, and choose the matching
 Gramps person where names are ambiguous. Decisions are saved to `decisions.json` in
-the data directory, so a review can span sittings. Applying to Gramps is not wired
-up yet. Photos show only when their originals were saved next to `DIR`
+the data directory, so a review can span sittings. Photos show only when their originals were saved next to `DIR`
 (`../media/person-<n>/`).
+
+`geneanet-drift apply --pages DIR` builds a plan from the accepted decisions,
+prints it (the dry run is always shown), and writes it only after you type the
+confirmation. Before any write it saves a Gramps XML backup to
+`<data dir>/backups/` through the read user and stops if that fails. Each
+write is logged to `<data dir>/applied.json` with its created and updated
+objects and transaction ids; a rerun skips logged steps and stops, without
+writing, if a logged object has since changed. `geneanet-drift undo --last N`
+reverts the newest N logged steps, newest first.
 
 Keep the data directory in its own private repository, and list `.env` in that
 repository's `.gitignore`. The tool refuses to run if the data or cache

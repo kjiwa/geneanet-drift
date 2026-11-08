@@ -8,7 +8,16 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from geneanet_drift import gedcom
-from geneanet_drift.capture import CaptureError
+from geneanet_drift.apply import (
+    Inputs,
+    apply,
+    backup,
+    build_plan,
+    preview,
+    read_log,
+    undo,
+)
+from geneanet_drift.capture import CaptureError, load_tree
 from geneanet_drift.config import (
     Config,
     ConfigError,
@@ -22,6 +31,8 @@ from geneanet_drift.config import (
     save_run,
     save_state,
 )
+from geneanet_drift.decisions import load_decisions
+from geneanet_drift.diff import diff_people
 from geneanet_drift.feed import (
     Entry,
     FeedError,
@@ -33,7 +44,9 @@ from geneanet_drift.feed import (
 from geneanet_drift.gramps import (
     GrampsClient,
     GrampsError,
+    GrampsWriter,
     Snapshot,
+    take_references,
     take_snapshot,
     take_tree,
 )
@@ -51,6 +64,7 @@ from geneanet_drift.match import (
     save_pending,
     work_items,
 )
+from geneanet_drift.match_tree import match_people
 from geneanet_drift.review import compare_target, render, source_title, unticked
 from geneanet_drift.review_data import load_review
 from geneanet_drift.server import serve
@@ -304,22 +318,109 @@ def finish(cfg: Config, ask: Ask, say: Say) -> int:
     return 0
 
 
-def _connect(cfg: Config, ask_secret: AskSecret) -> GrampsClient:
-    if not cfg.gramps_user:
+def _login(
+    cfg: Config,
+    label: str,
+    user: str | None,
+    password: str | None,
+    ask_secret: AskSecret,
+) -> tuple[str, str]:
+    prefix = label.upper().replace(" ", "_")
+    if not user:
         raise ConfigError(
-            "no Gramps user; set `gramps_user` in config.toml or GRAMPS_USER"
+            f"no {label} user; set `{prefix.lower()}_user` in config.toml "
+            f"or {prefix}_USER"
         )
-    password = cfg.gramps_password
     if not password:
         if not sys.stdin.isatty():
             raise ConfigError(
-                "GRAMPS_PASSWORD is not set and there is no terminal to prompt on; "
+                f"{prefix}_PASSWORD is not set and there is no terminal to prompt on; "
                 f"set it in the environment or in {cfg.data_dir / '.env'}"
             )
-        password = ask_secret(f"Gramps password for {cfg.gramps_user}: ")
+        password = ask_secret(f"{label} password for {user}: ")
         if not password:
-            raise ConfigError("empty Gramps password")
-    return GrampsClient(cfg.gramps_url, cfg.gramps_user, password)
+            raise ConfigError(f"empty {label} password")
+    return user, password
+
+
+def _connect(cfg: Config, ask_secret: AskSecret) -> GrampsClient:
+    user, password = _login(
+        cfg, "Gramps", cfg.gramps_user, cfg.gramps_password, ask_secret
+    )
+    return GrampsClient(cfg.gramps_url, user, password)
+
+
+def _connect_writer(cfg: Config, ask_secret: AskSecret) -> GrampsWriter:
+    user, password = _login(
+        cfg,
+        "Gramps write",
+        cfg.gramps_write_user,
+        cfg.gramps_write_password,
+        ask_secret,
+    )
+    return GrampsWriter(cfg.gramps_url, user, password)
+
+
+def _confirmed(ask: Ask, say: Say, phrase: str) -> bool:
+    if ask(f'Type "{phrase}" to continue: ').strip() == phrase:
+        return True
+    say("Nothing written.")
+    return False
+
+
+def apply_decisions(
+    cfg: Config,
+    pages: Path,
+    ask: Ask,
+    ask_secret: AskSecret,
+    say: Say,
+    now: datetime,
+) -> int:
+    reader = _connect(cfg, ask_secret)
+    tree = take_tree(reader)
+    people = load_tree(pages, cfg.tree)
+    negatives = load_negatives(cfg.negatives_path)
+    matches = match_people(people, tree, source_title(cfg.tree), negatives)
+    inputs = Inputs(
+        people,
+        matches,
+        tree,
+        take_references(reader),
+        cfg.tree,
+        now.date(),
+        pages.parent,
+    )
+    plan = build_plan(
+        diff_people(people, tree, matches), load_decisions(cfg.decisions_path), inputs
+    )
+    logged = {(e["change"], e["index"]) for e in read_log(cfg.applied_path)}
+    say(preview(plan, logged))
+    pending = sum((s.change_id, s.index) not in logged for s in plan.steps)
+    if not pending:
+        say("Nothing to apply.")
+        return 0
+    if not _confirmed(ask, say, f"apply {pending}"):
+        return 1
+    say(f"Backup: {backup(reader, cfg.backups_dir, now)}")
+    written = apply(plan, _connect_writer(cfg, ask_secret), cfg.applied_path, say)
+    say(f"Applied {written} steps; see {cfg.applied_path}.")
+    return 0
+
+
+def undo_applied(
+    cfg: Config, last: int, ask: Ask, ask_secret: AskSecret, say: Say
+) -> int:
+    entries = read_log(cfg.applied_path)[-last:]
+    if not entries:
+        say("Nothing applied to undo.")
+        return 0
+    for entry in reversed(entries):
+        say(f"  {entry['summary']}  (transactions {entry['transactions']})")
+    if not _confirmed(ask, say, f"undo {len(entries)}"):
+        return 1
+    undone = undo(_connect_writer(cfg, ask_secret), cfg.applied_path, last, say)
+    say(f"Undid {undone} steps.")
+    return 0
 
 
 def _check_snapshot_target(out: Path) -> None:
@@ -385,6 +486,14 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument(
         "--port", type=int, default=0, help="port on 127.0.0.1 (default: a free one)"
     )
+    apply_command = commands.add_parser(
+        "apply", help="write accepted changes to Gramps"
+    )
+    apply_command.add_argument(
+        "--pages", type=Path, required=True, help="captured pages"
+    )
+    undo_command = commands.add_parser("undo", help="revert the newest applied steps")
+    undo_command.add_argument("--last", type=int, required=True, help="steps to revert")
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.data_dir, os.environ)
@@ -394,6 +503,11 @@ def main(argv: list[str] | None = None) -> int:
             return snapshot_tree(cfg, args.out, getpass.getpass, print)
         if args.command == "review":
             return review_tree(cfg, args.pages, args.snapshot, args.port, print)
+        if args.command == "apply":
+            now = datetime.now().astimezone()
+            return apply_decisions(cfg, args.pages, input, getpass.getpass, print, now)
+        if args.command == "undo":
+            return undo_applied(cfg, args.last, input, getpass.getpass, print)
         if args.done:
             return finish(cfg, input, print)
         client = _connect(cfg, getpass.getpass)

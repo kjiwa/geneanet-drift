@@ -182,14 +182,30 @@ class GrampsClient:
         self._token: str | None = None
         self.permissions: frozenset[str] = frozenset()
 
-    def _send(
-        self, method: str, path: str, headers: dict[str, str], body: bytes | None = None
+    def _raw(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+        ok: tuple[int, ...] = (200,),
     ):
         status, response_headers, payload = self._transport(
             method, self._base_url + path, headers, body
         )
-        if status != 200:
+        if status not in ok:
             raise GrampsError(f"{method} {path.split('?')[0]} returned HTTP {status}")
+        return response_headers, payload
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+        ok: tuple[int, ...] = (200,),
+    ):
+        response_headers, payload = self._raw(method, path, headers, body, ok)
         return response_headers, json.loads(payload)
 
     def _mint_token(self) -> str:
@@ -201,13 +217,16 @@ class GrampsClient:
         )
         token = payload["access_token"]
         self.permissions = _token_permissions(token)
+        self._check_permissions()
+        return token
+
+    def _check_permissions(self) -> None:
         if PRIVATE_PERMISSION not in self.permissions:
             raise GrampsError(
                 f"user {self._credentials['username']!r} cannot view private records, "
                 "so the snapshot would silently omit them; use a role that has "
                 f"{PRIVATE_PERMISSION} but no write permissions"
             )
-        return token
 
     def role_warnings(self) -> list[str]:
         writes = sorted(
@@ -234,6 +253,12 @@ class GrampsClient:
         )
         total = headers.get("x-total-count")
         return payload, int(total) if total is not None else None
+
+    def fetch(self, path: str) -> bytes:
+        if self._token is None:
+            self._token = self._mint_token()
+        _, payload = self._raw("GET", path, {"Authorization": f"Bearer {self._token}"})
+        return payload
 
     def get_all(self, path: str, **query) -> list:
         items: list = []
@@ -472,3 +497,72 @@ def take_tree(client: GrampsClient) -> GrampsTree:
         ),
         tuple(_family(raw, events) for raw in client.get_all("/api/families/")),
     )
+
+
+@dataclass(frozen=True)
+class References:
+    places: dict[str, str]  # name key of the place hierarchy title -> handle
+    sources: dict[str, str]  # source title -> handle
+
+
+def take_references(client: GrampsClient) -> References:
+    places = _by_handle(client, "/api/places/")
+    return References(
+        {name_key(_place_title(h, places)): h for h in places},
+        {
+            source["title"]: source["handle"]
+            for source in client.get_all("/api/sources/", keys="handle,title")
+        },
+    )
+
+
+REQUIRED_WRITE_PERMISSIONS = frozenset({"AddObject", "EditObject"})
+# The Editor role. DeleteObject is part of it and is what lets an undo remove
+# what an apply added; anything beyond it (imports, repair, user management,
+# batch deletes) is refused.
+WRITER_PERMISSIONS = REQUIRED_WRITE_PERMISSIONS | {
+    PRIVATE_PERMISSION,
+    OWN_USER,
+    "DeleteObject",
+    "EditCustomFilter",
+    "EditNameGroup",
+}
+WRITE_STATUSES = (200, 201, 202)
+
+
+class GrampsWriter(GrampsClient):
+    """Writes with a token that carries the Editor permissions and nothing more."""
+
+    def _check_permissions(self) -> None:
+        user = self._credentials["username"]
+        missing = REQUIRED_WRITE_PERMISSIONS - self.permissions
+        if missing:
+            raise GrampsError(
+                f"user {user!r} lacks {', '.join(sorted(missing))}; "
+                "the write user needs the Editor role"
+            )
+        excess = self.permissions - WRITER_PERMISSIONS
+        if excess:
+            raise GrampsError(
+                f"user {user!r} holds {', '.join(sorted(excess))}; refusing a role "
+                "broader than Editor"
+            )
+
+    def _write(self, method: str, path: str, body: bytes, content_type: str):
+        if self._token is None:
+            self._token = self._mint_token()
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": content_type,
+        }
+        _, payload = self._send(method, path, headers, body, WRITE_STATUSES)
+        return payload
+
+    def post_json(self, path: str, value: object):
+        return self._write("POST", path, json.dumps(value).encode(), "application/json")
+
+    def put_json(self, path: str, value: object):
+        return self._write("PUT", path, json.dumps(value).encode(), "application/json")
+
+    def post_file(self, path: str, data: bytes, mime: str):
+        return self._write("POST", path, data, mime)

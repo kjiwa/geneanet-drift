@@ -3,6 +3,7 @@ from datetime import date, datetime
 
 import pytest
 
+from geneanet_drift.apply import read_log
 from geneanet_drift.config import (
     ConfigError,
     Run,
@@ -12,10 +13,23 @@ from geneanet_drift.config import (
     load_state,
     save_run,
     save_state,
+    write_json,
 )
-from geneanet_drift.gramps import GrampsClient
+from geneanet_drift.decisions import ACCEPTED, Decision, save_decisions
+from geneanet_drift.diff import diff_people
+from geneanet_drift.gramps import GrampsClient, References
 from geneanet_drift.match import load_negatives, load_pending
-from geneanet_drift.wizard import _connect, finish, main, run
+from geneanet_drift.match_tree import match_people
+from geneanet_drift.wizard import (
+    _connect,
+    _connect_writer,
+    apply_decisions,
+    finish,
+    main,
+    run,
+    undo_applied,
+)
+from tests.builders import SOURCE, crosswalk, gramps, his, his_event, his_people, tree
 from tests.conftest import FakeGramps, make_client
 
 TODAY = date(2026, 9, 20)
@@ -337,3 +351,93 @@ def test_done_needs_no_credentials(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     assert main(["--data-dir", str(data_dir), "--done"]) == 1
     assert "no finished run" in capsys.readouterr().out.casefold()
+
+
+def test_connect_writer_without_a_user_names_both_places(cfg):
+    ask_secret, _ = secret_script()
+    with pytest.raises(ConfigError, match="gramps_write_user.*GRAMPS_WRITE_USER"):
+        _connect_writer(cfg, ask_secret)
+
+
+def test_connect_writer_prompts_for_its_own_password(cfg, on_terminal):
+    ask_secret, prompts = secret_script()
+    _connect_writer(replace(cfg, gramps_write_user="editor"), ask_secret)
+    assert "Gramps write password for editor" in prompts[0]
+
+
+def logged(cfg, summary="create Wren Pellow", transactions=(5, 6)):
+    write_json(
+        cfg.applied_path,
+        {
+            "steps": [
+                {
+                    "change": "c1",
+                    "index": 0,
+                    "summary": summary,
+                    "created": [],
+                    "updated": [],
+                    "transactions": list(transactions),
+                }
+            ]
+        },
+    )
+
+
+def test_undo_with_nothing_logged_writes_nothing(cfg):
+    said: list[str] = []
+    assert undo_applied(cfg, 1, input, None, said.append) == 0
+    assert said == ["Nothing applied to undo."]
+
+
+def test_undo_needs_the_typed_confirmation(cfg, monkeypatch):
+    logged(cfg)
+    monkeypatch.setattr(
+        "geneanet_drift.wizard._connect_writer",
+        lambda *args: pytest.fail("connected without confirmation"),
+    )
+    said: list[str] = []
+    assert undo_applied(cfg, 1, lambda prompt: "yes", None, said.append) == 1
+    assert "create Wren Pellow" in said[0]
+    assert said[-1] == "Nothing written."
+    assert read_log(cfg.applied_path)
+
+
+def test_apply_shows_the_plan_then_backs_up_before_writing(cfg, tmp_path, monkeypatch):
+    mine = tree(
+        [gramps("h1", "Ardeth", "Pellow", citations=(crosswalk("Ardeth Pellow"),))]
+    )
+    people = his_people(his(1, "Ardeth", "Pellow", events=(his_event("born", 1902),)))
+    changes = diff_people(
+        people,
+        mine,
+        match_people(people, mine, SOURCE, load_negatives(cfg.negatives_path)),
+    )
+    save_decisions(cfg.decisions_path, {c.id: Decision(ACCEPTED) for c in changes})
+    calls: list[str] = []
+    monkeypatch.setattr("geneanet_drift.wizard._connect", lambda *a: "reader")
+    monkeypatch.setattr("geneanet_drift.wizard.take_tree", lambda reader: mine)
+    monkeypatch.setattr("geneanet_drift.wizard.load_tree", lambda pages, name: people)
+    monkeypatch.setattr(
+        "geneanet_drift.wizard.take_references", lambda reader: References({}, {})
+    )
+    monkeypatch.setattr(
+        "geneanet_drift.wizard.backup",
+        lambda reader, directory, now: calls.append("backup") or directory / "b",
+    )
+    monkeypatch.setattr("geneanet_drift.wizard._connect_writer", lambda *a: "writer")
+    monkeypatch.setattr(
+        "geneanet_drift.wizard.apply",
+        lambda plan, writer, path, say: calls.append("apply") or len(plan.steps),
+    )
+    said: list[str] = []
+    now = datetime(2026, 11, 8, 9, 0).astimezone()
+
+    wrong = apply_decisions(cfg, tmp_path, lambda p: "apply 0", None, said.append, now)
+    assert (wrong, calls) == (1, [])
+    assert "steps, " in said[0]
+
+    said.clear()
+    ask = lambda prompt: "apply 3"
+    assert apply_decisions(cfg, tmp_path, ask, None, said.append, now) == 0
+    assert calls == ["backup", "apply"]
+    assert said[-1].startswith("Applied 3 steps")
