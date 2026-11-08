@@ -257,3 +257,9 @@ def test_history_ignores_page_content_after_the_last_row(history_text):
     assert parse_history_html(padded, "exampletree") == parse_history_html(
         history_text, "exampletree"
     )
+
+
+def test_history_without_person_links_fails(history_text):
+    unlinked = history_text.replace("exampletree_w", "othertree_w")
+    with pytest.raises(FeedError, match="none links to a person"):
+        parse_history_html(unlinked, "exampletree")

@@ -219,15 +219,17 @@ class _HistoryRows(HTMLParser):
 
 def _link_address(href: str, tree: str) -> tuple[str, str, str] | None:
     parts = urlsplit(href)
-    query = parse_qs(parts.query)
-    if parts.path != f"/{tree}_w" or "m" in query or not {"n", "p"} & query.keys():
+    query = parse_qs(parts.query, keep_blank_values=True)
+    if parts.path != f"/{tree}_w" or "m" in query or not {"n", "p"} <= query.keys():
         return None
-    return tuple(query.get(key, [""])[0] for key in ("n", "p")) + (
-        query.get("oc", ["0"])[0],
-    )
+    return (query["n"][0], query["p"][0], query.get("oc", ["0"])[0] or "0")
 
 
 def _history_entry(row: list[Line], href: str, address) -> Entry:
+    if len(row) < 5:
+        raise FeedError(
+            f"line {row[0][0] if row else '?'}: change-log row is incomplete"
+        )
     when = _parse_when(row[0], row[1])
     person, lifespan, change, admin = _split_body(row[2:])
     birth, death = _parse_lifespan(lifespan[1]) if lifespan else (None, None)
@@ -250,6 +252,10 @@ def parse_history_html(html: str, tree: str) -> list[Entry]:
             continue
         entries.append(_history_entry(texts, href, address))
         numbers.append(start)
+    if not entries:
+        raise FeedError(
+            f"{len(parser.rows)} change-log rows found but none links to a person of {tree!r}"
+        )
     _check_newest_first(entries, numbers)
     return entries
 
