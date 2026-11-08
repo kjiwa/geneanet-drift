@@ -1,28 +1,32 @@
 # geneanet-drift
 
-Reports a Geneanet tree's recent edits against a Gramps Web tree. Useful when a
-relative keeps editing their own copy of a tree you derived yours from, and you
-want to fold the changes back in by hand.
+Folds the edits a relative makes in their Geneanet tree back into your Gramps
+Web tree. A browser extension saves the Geneanet pages you open; this tool
+compares the saved pages with Gramps, lets you accept, edit or reject each
+difference in a local web page, and writes the accepted ones to Gramps.
 
 ## What it does and does not do
 
-- Reading is GET-only. Give the read user no write permissions but
+- The Python tool never contacts Geneanet. Geneanet's terms prohibit automatic
+  access. The browser extension (below) acts only on a page you opened
+  yourself: it never requests, navigates, clicks, scrolls or paginates. It
+  saves the DOM your browser already rendered, the same as select-all and copy,
+  and saves an image only when you click for it, like "Save image as". That is
+  the author's reading, not legal advice; Geneanet may still treat any
+  page-reading extension as a tool.
+- Reading Gramps is GET-only. Give the read user no write permissions but
   `ViewPrivate`; it refuses a user that cannot view private records, because
   the snapshot would silently omit those people. Only `geneanet-drift apply` and
   `undo` write, as a separate Editor user that must hold `AddObject` and
   `EditObject` and nothing beyond the Editor role.
-- The Python tool never contacts Geneanet. Geneanet's terms prohibit automatic
-  access, so you copy the change-log page by hand; the wizard prints each step
-  and echoes what it parsed before trusting it. The optional browser extension
-  (below) only saves pages you open yourself; it never requests, navigates or
-  clicks anything.
-- It produces a review sheet: per cluster of related edits, with Gramps-ready
-  Citation and Note blocks. You apply them in Gramps Desktop or Web.
+- Nothing is written without a dry-run preview, a typed confirmation and a
+  Gramps XML backup taken first.
 
 Links between his people and yours are stored in Gramps itself: a Citation
 under the Source `Geneanet - <tree> family tree` whose `page` is his display name
-for the person. Only negative decisions, deferred items and the last-sync
-timestamp live in the private data directory.
+for the person. The private data directory holds `decisions.json`,
+`applied.json`, `backups/` and an optional hand-written `negatives.json` of
+rejected pairings.
 
 ## Install
 
@@ -45,12 +49,13 @@ no build step.
 Open the extension's Options, enter the tree name, and on Firefox choose Grant
 access. Then browse: each person page you open is saved, and the popup lists
 the people you have not opened yet. Pages are only saved while a tree name is
-set. Edit forms are never saved.
+set. Edit forms are never saved. The data entry history page is saved as
+`history-editing.html` beside the person pages.
 
 ## Configure
 
-The tool remembers everything it can and prompts only for the one thing it
-deliberately refuses to remember: the Gramps password.
+The tool remembers everything it can and prompts only for what it deliberately
+refuses to remember: the Gramps passwords.
 
 The data directory holds `config.toml`, `.env` and the tool's state. Point
 `--data-dir` or `GENEANET_DRIFT_DATA` at it (default
@@ -72,7 +77,7 @@ The data directory holds `config.toml`, `.env` and the tool's state. Point
 
 Within a row, the process environment beats `<data dir>/.env`, which beats
 `config.toml`. With no terminal and no password set, the tool exits with an
-error instead of prompting.
+error instead of prompting. The write rows are read only by `apply` and `undo`.
 
 ```sh
 echo 'GRAMPS_PASSWORD=...' > <data dir>/.env && chmod 600 <data dir>/.env
@@ -83,55 +88,54 @@ directory. Its format is `KEY=VALUE` lines, `#` comments, an optional `export `
 prefix and optional surrounding quotes; there is no interpolation, escape
 sequences or multi-line values.
 
-## The change log
+## Workflow
 
-The one step the tool cannot do for you. The page is the tree's "Data entry
-history" (the `/history/editing` path under the tree URL from above). The
-interface must be in English, because the parser reads English month names and
-rejects the paste otherwise. Select the whole page and paste it into a
-plain-text file. The wizard walks through these steps on every run.
+Run these in order. `DIR` is the capture folder, by default
+`~/Downloads/geneanet-drift/<tree>/pages`.
 
-## Run
-
-```sh
-geneanet-drift          # wizard: prints every step
-geneanet-drift --done   # after applying the review
-```
-
-Options: `--since YYYY-MM-DD` reviews from that date instead of after the last sync
-(the first run asks how far back to look), and `--feed PATH` reads the change log
-from an existing file.
-
-`geneanet-drift gedcom --pages DIR --out FILE` exports the captured person pages
-(`DIR` holds `person-<n>.html`) as GEDCOM 5.5.1. Media `FILE` paths are relative to
-the capture folder of the tree (`media/person-<n>/...`).
-
-`geneanet-drift snapshot --out FILE` saves the Gramps tree (read user) to a JSON file.
-`geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves the review page
-on `127.0.0.1` (default: a free port) and prints its URL. It compares the captured
-pages with the snapshot; accept, edit or reject each change, and choose the matching
-Gramps person where names are ambiguous. Decisions are saved to `decisions.json` in
-the data directory, so a review can span sittings. Photos show only when their originals were saved next to `DIR`
-(`../media/person-<n>/`).
-
-`geneanet-drift apply --pages DIR` builds a plan from the accepted decisions,
-prints it (the dry run is always shown), and writes it only after you type the
-confirmation. Before any write it saves a Gramps XML backup to
-`<data dir>/backups/` through the read user and stops if that fails. Each
-write is logged to `<data dir>/applied.json` with its created and updated
-objects and transaction ids; a rerun skips logged steps and stops, without
-writing, if a logged object has since changed. `geneanet-drift undo --last N`
-reverts the newest N logged steps, newest first.
+1. Capture. `geneanet-drift` (the same as `geneanet-drift capture-status`) reads
+   the saved change log `DIR/history-editing.html` and lists every person in it
+   whose captured page is missing or older than their newest change (file time
+   against the change time), each with the address to open. No sync state is
+   kept: capturing a page is what clears it from the list. Geneanet's times are
+   compared as written against your local file times, so a change within a few
+   hours of a capture may need a manual check. Open those pages with the
+   extension on, rerun to check, and repeat until nothing is left. Options:
+   `--pages DIR`, `--since YYYY-MM-DD` to list only changes from that date on,
+   and `--feed FILE` to read a pasted copy of the change log (the page in
+   English, select-all, paste into a plain-text file) instead of the saved
+   page.
+2. Snapshot. `geneanet-drift snapshot --out FILE` saves the Gramps tree (read
+   user) to a JSON file outside this repository.
+3. Review. `geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves
+   the review page on `127.0.0.1` (default: a free port) and prints its URL.
+   Accept, edit or reject each change, and choose the matching Gramps person
+   where names are ambiguous. Decisions are saved to `decisions.json`, so a
+   review can span sittings. Photos show only when their originals were saved
+   next to `DIR` (`../media/person-<n>/`).
+4. Apply. `geneanet-drift apply --pages DIR` builds a plan from the accepted
+   decisions, prints it (the dry run is always shown), and writes it only after
+   you type the confirmation. Before any write it saves a Gramps XML backup to
+   `<data dir>/backups/` through the read user and stops if that fails. Each
+   write is logged to `<data dir>/applied.json` with its created and updated
+   objects and transaction ids; a rerun skips logged steps and stops, without
+   writing, if a logged object has since changed.
+   `geneanet-drift undo --last N` reverts the newest N logged steps, newest
+   first.
+5. GEDCOM, optionally. `geneanet-drift gedcom --pages DIR --out FILE` exports
+   the captured person pages (`DIR` holds `person-<n>.html`) as GEDCOM 5.5.1.
+   Media `FILE` paths are relative to the capture folder of the tree
+   (`media/person-<n>/...`).
 
 Keep the data directory in its own private repository, and list `.env` in that
-repository's `.gitignore`. The tool refuses to run if the data or cache
+repository's `.gitignore`. The tool refuses to run if the data
 directory is inside its own git work tree.
 
 ## Keeping personal data out of this repository
 
 gitleaks in CI catches credentials, not names. Personal data stays out by
-structure: test fixtures use invented names only, the data and cache
-directories are outside the repository, and `.gitignore` lists the files the
+structure: test fixtures use invented names only, the data directory is
+outside the repository, and `.gitignore` lists the files the
 tool writes.
 
 ## Contributing

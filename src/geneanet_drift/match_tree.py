@@ -68,9 +68,7 @@ def _gramps_person(person: GrampsFullPerson) -> GrampsPerson:
 def _item(person: Person) -> WorkItem:
     return WorkItem(
         name=display_name(person),
-        url="",
         key=str(person.key),
-        changes=(),
         birth_year=_his_year(person, "born"),
         death_year=_his_year(person, "deceased"),
     )

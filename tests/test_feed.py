@@ -4,7 +4,6 @@ import pytest
 
 from geneanet_drift.feed import (
     FeedError,
-    format_lifespan,
     is_stale,
     name_key,
     parse_feed,
@@ -59,10 +58,9 @@ def test_dotted_name_is_kept_as_displayed(entries):
     assert named(entries, "Kestrin.0 Vantel").change == "Individual updated"
 
 
-def test_deletion_and_picture_rows_are_known_labels(entries):
+def test_deletion_and_picture_rows_are_kept(entries):
     assert named(entries, "Zenobe Vantel").change == "Individual deleted"
     assert entries[0].change == "Picture added"
-    assert all(e.known for e in entries)
 
 
 def test_extra_blank_lines_inside_a_record_are_harmless(entries):
@@ -78,14 +76,10 @@ def test_header_lines_are_ignored(feed_text):
     assert feed_text.startswith("Date\n\nIndividual\n\nUpdate\n\nAdmin\n")
 
 
-def test_unknown_change_label_is_kept_and_flagged():
+def test_unknown_change_label_is_kept():
     text = "August 25, 2026\n\n10:00:00\n\nTariq Zorvane\n\nNote modified\n\nadminone"
     (entry,) = parse_feed(text, "example")
-    assert (entry.change, entry.admin, entry.known) == (
-        "Note modified",
-        "adminone",
-        False,
-    )
+    assert (entry.change, entry.admin) == ("Note modified", "adminone")
 
 
 def test_pagination_footer_is_cut(feed_text):
@@ -153,13 +147,6 @@ def test_name_key_folds_case_and_whitespace_only():
     assert name_key("  Elowen   QUILLON ") == name_key("elowen quillon")
     assert name_key("Kestrin.0 Vantel") != name_key("Kestrin.1 Vantel")
     assert name_key("Tariq Zorvane") != name_key("Tarik Zorvane")
-
-
-def test_format_lifespan():
-    assert format_lifespan(1912, 1962) == "1912 - 1962"
-    assert format_lifespan(1964, None) == "1964 -"
-    assert format_lifespan(None, 1968) == "- 1968"
-    assert format_lifespan(None, None) == ""
 
 
 def test_text_without_records_is_rejected():

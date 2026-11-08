@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from geneanet_drift.apply import source_title
 from geneanet_drift.capture import MONTHS, Person, load_tree
 from geneanet_drift.config import Config
 from geneanet_drift.decisions import ACCEPTED, EDITED, LINK_PREFIX, Decision
@@ -21,7 +22,6 @@ from geneanet_drift.match_tree import (
     gramps_year,
     match_people,
 )
-from geneanet_drift.review import source_title
 from geneanet_drift.tree_file import read_tree
 
 TEXT, NOTE, FACT = "text", "note", "fact"

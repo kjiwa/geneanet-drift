@@ -1,6 +1,6 @@
 # Copy to <data dir>/config.toml. GRAMPS_URL, GRAMPS_USER and GRAMPS_WRITE_USER override the keys below.
-# The password is never read from here: set GRAMPS_PASSWORD in the environment or
-# <data dir>/.env, or leave it unset to be prompted.
+# Passwords are never read from here: set GRAMPS_PASSWORD and GRAMPS_WRITE_PASSWORD in the
+# environment or <data dir>/.env, or leave them unset to be prompted.
 
 # The slug in the Geneanet tree URL, without the trailing _w.
 tree = "example"

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "geneanet-drift"
 version = "0.1.0"
-description = "Report a Geneanet tree's recent edits against a Gramps Web tree"
+description = "Fold edits captured from a Geneanet tree into a Gramps Web tree, with review and undo"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []

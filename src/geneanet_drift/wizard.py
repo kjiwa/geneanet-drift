@@ -3,7 +3,6 @@ import getpass
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -16,64 +15,39 @@ from geneanet_drift.apply import (
     newest_steps,
     preview,
     read_log,
+    source_title,
     undo,
 )
-from geneanet_drift.capture import CaptureError, load_tree
+from geneanet_drift.capture import CaptureError, load_tree, page_times
 from geneanet_drift.config import (
     Config,
     ConfigError,
-    Run,
-    State,
     end_of_day,
     find_repo_root,
     load_config,
-    load_run,
-    load_state,
-    save_run,
-    save_state,
 )
 from geneanet_drift.decisions import load_decisions
 from geneanet_drift.diff import diff_people
-from geneanet_drift.feed import (
-    Entry,
-    FeedError,
-    format_lifespan,
-    history_url,
-    parse_feed,
-    since,
-)
+from geneanet_drift.feed import Entry, FeedError, since
 from geneanet_drift.gramps import (
     GrampsClient,
     GrampsError,
     GrampsWriter,
-    Snapshot,
     take_references,
-    take_snapshot,
     take_tree,
 )
-from geneanet_drift.match import (
-    Cluster,
-    Resolution,
-    WorkItem,
-    build_clusters,
-    build_notices,
-    combine,
-    load_negatives,
-    load_pending,
-    needing_decision,
-    save_negatives,
-    save_pending,
-    work_items,
-)
+from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import match_people
-from geneanet_drift.review import compare_target, render, source_title, unticked
 from geneanet_drift.review_data import load_review
 from geneanet_drift.server import serve
+from geneanet_drift.status import (
+    Visit,
+    load_change_log,
+    pages_to_visit,
+)
 from geneanet_drift.tree_file import write_tree
 
-DEFAULT_WINDOW = date(2023, 7, 15)
-SELECT_ALL = "Cmd+A" if sys.platform == "darwin" else "Ctrl+A"
-PREVIEW_ROWS = 3
+PAGES_PARENT = Path("Downloads") / "geneanet-drift"
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
@@ -84,238 +58,61 @@ def _moment(moment: datetime) -> str:
     return moment.isoformat(sep=" ", timespec="seconds")
 
 
-def _report_status(say: Say, state: State, snapshot: Snapshot) -> None:
-    last_sync = _moment(state.last_sync) if state.last_sync else "never"
-    say(
-        f"Last sync: {last_sync}.  Gramps tree reachable: "
-        f"{len(snapshot.people)} people, {snapshot.families} families."
-    )
+def default_pages(tree: str) -> Path:
+    return Path.home() / PAGES_PARENT / tree / "pages"
+
+
+def _cutoff(since_day: date | None) -> datetime | None:
+    return end_of_day(since_day - timedelta(days=1)) if since_day else None
+
+
+def _report_visits(say: Say, visits: list[Visit]) -> None:
+    if not visits:
+        say("Nothing to visit: every changed page is captured.")
+        return
+    say(f"Visit these {len(visits)} pages in your browser:")
+    for visit in visits:
+        entry = visit.entry
+        saved = f"saved {_moment(visit.saved)}" if visit.saved else "not captured"
+        say("")
+        say(f"  {entry.name}")
+        say(f"    changed: {_moment(entry.when)}")
+        say(f"    page:    {saved}")
+        say(f"    {entry.url}")
+
+
+def _report_next(say: Say, pages: Path) -> None:
+    say("")
+    say("Then run, in order, with DIR as")
+    say(f"  {pages}")
+    say("  geneanet-drift snapshot --out FILE")
+    say("  geneanet-drift review --pages DIR \\")
+    say("    --snapshot FILE")
+    say("  geneanet-drift apply --pages DIR")
+    say("  geneanet-drift gedcom --pages DIR \\")
+    say("    --out FILE")
+
+
+def _report_header(say: Say, entries: list[Entry], since_day: date | None) -> None:
+    where = f"from {since_day} on" if since_day else "in the whole log"
+    say(f"Changes {where}:")
+    say(f"  {len(since(entries, _cutoff(since_day)))} of {len(entries)} log rows.")
+    say("Times are compared as Geneanet wrote")
+    say("them against local file times, so a")
+    say("change within a few hours of a")
+    say("capture may need a manual check.")
     say("")
 
 
-def _read_feed(cfg: Config, feed: Path | None, ask: Ask, say: Say) -> list[Entry]:
-    say("STEP 1 of 3 - copy his change log")
-    if feed is None:
-        feed = cfg.feed_path
-        feed.unlink(missing_ok=True)
-        say(f"  a. Open {history_url(cfg.tree)}")
-        say("     (English interface required; the parser reads English dates)")
-        say('  b. Set "Results per page" to the largest value. Whether the page')
-        say("     remembers that setting is unverified, so check it each time.")
-        say(f"     Then select the whole page ({SELECT_ALL}) and copy it.")
-        say(f"  c. Paste into {feed} and save.   (or: geneanet-drift --feed PATH)")
-        ask("  Press Enter once the feed is saved: ")
-    if not feed.is_file():
-        raise FeedError(f"{feed} was not saved")
-    return parse_feed(feed.read_text(), cfg.tree)
-
-
-def _echo_feed(entries: list[Entry], say: Say) -> None:
-    say("")
-    say(
-        f"  Parsed {len(entries)} records, {entries[-1].when.date()} to "
-        f"{entries[0].when.date()}, newest first."
-    )
-    for entry in entries[:PREVIEW_ROWS]:
-        say(f"    {_moment(entry.when)}  {entry.change:<20}  {entry.name}")
-    unknown = sorted({e.change for e in entries if not e.known})
-    if unknown:
-        say(f"  Warning: unrecognised change labels (see the review): {unknown}")
-
-
-def _ask_window(ask: Ask) -> date:
-    while True:
-        answer = ask(f"  How far back should I look? YYYY-MM-DD [{DEFAULT_WINDOW}]: ")
-        if not answer.strip():
-            return DEFAULT_WINDOW
-        try:
-            return date.fromisoformat(answer.strip())
-        except ValueError:
-            continue
-
-
-def _window_start(
-    state: State, run_state: Run, override: date | None, ask: Ask
-) -> date | None:
-    return (
-        override
-        or run_state.window_start
-        or (None if state.last_sync else _ask_window(ask))
-    )
-
-
-def _cutoff(state: State, window: date | None) -> datetime:
-    return end_of_day(window - timedelta(days=1)) if window else state.last_sync
-
-
-def _report_window(
-    say: Say, entries: list[Entry], cutoff: datetime, window: date | None
-) -> None:
-    where = f"back to {window}" if window else f"after {_moment(cutoff)}"
-    fresh = len(since(entries, cutoff))
-    say(f"  Looking {where} (change with --since): {fresh} records.")
-    if entries[-1].when > cutoff:
-        say(
-            f"  Warning: the oldest row ({_moment(entries[-1].when)}) is newer than that; "
-            'the page may not reach back far enough. Raise "Results per page".'
-        )
-
-
-def _step_one(
-    cfg: Config,
-    state: State,
-    run_state: Run,
-    feed: Path | None,
-    override: date | None,
-    ask: Ask,
-    say: Say,
-) -> tuple[list[Entry], datetime, Run] | None:
-    entries = _read_feed(cfg, feed, ask, say)
-    _echo_feed(entries, say)
-    window = _window_start(state, run_state, override, ask)
-    run_state = replace(run_state, window_start=window)
-    save_run(cfg.run_path, run_state)
-    cutoff = _cutoff(state, window)
-    _report_window(say, entries, cutoff, window)
-    if ask("  Does that look right? [Y/n] ").strip().casefold() == "n":
-        save_run(cfg.run_path, replace(run_state, window_start=None))
-        say("Stopped; nothing recorded. Fix the capture or the window and run again.")
-        return None
-    return entries, cutoff, run_state
-
-
-def _next_state(state: State, entries: list[Entry]) -> State:
-    newest = max(e.when for e in entries)
-    return State(max(newest, state.last_sync) if state.last_sync else newest)
-
-
-def _describe(resolution: Resolution, position: int, say: Say) -> None:
-    item = resolution.item
-    lifespan = f"   ({item.lifespan})" if item.lifespan else ""
-    say("")
-    say(f"  His tree: {item.name}{lifespan}   {compare_target(item)}")
-    say(f"  Changes:  {item.history}")
-    for number, person in enumerate(resolution.candidates, start=1):
-        years = format_lifespan(person.birth_year, person.death_year)
-        shown = f"   ({years})" if years else ""
-        say(f"  Gramps {number}: {person.name} [{person.gramps_id}]{shown}")
-    say(f"  Why asked: {resolution.reason} ({position} left to decide)")
-
-
-def _resolve(
-    cfg: Config,
-    items: list[WorkItem],
-    snapshot: Snapshot,
-    run_state: Run,
-    ask: Ask,
-    say: Say,
-) -> tuple[list[Cluster], list[WorkItem], Run]:
-    negatives = load_negatives(cfg.negatives_path)
-    deferred: list[WorkItem] = []
-    announced = False
-    while True:
-        deferred_keys = {d.key for d in deferred}
-        live = [i for i in items if i.key not in deferred_keys]
-        clusters = build_clusters(
-            live, snapshot, negatives, run_state.accepted, cfg.priority_surnames
-        )
-        undecided = needing_decision(clusters)
-        if not undecided:
-            return clusters, deferred, run_state
-        if not announced:
-            say(
-                "STEP 2 of 3 - confirm matches   (only for people not already linked in Gramps)"
-            )
-            announced = True
-        current = undecided[0]
-        _describe(current, len(undecided), say)
-        choice = (
-            ask("  Number to accept, n for none of these, p to decide later: ")
-            .strip()
-            .casefold()
-        )
-        candidates = current.candidates
-        if choice.isdigit() and 1 <= int(choice) <= len(candidates):
-            accepted = {
-                **run_state.accepted,
-                current.item.key: candidates[int(choice) - 1].gramps_id,
-            }
-            run_state = replace(run_state, accepted=accepted)
-            save_run(cfg.run_path, run_state)
-        elif choice == "n":
-            negatives.update((current.item.key, c.gramps_id) for c in candidates)
-            save_negatives(cfg.negatives_path, negatives)
-        elif choice == "p":
-            note = ask("  Note for next time (e.g. who you asked): ").strip()
-            deferred.append(replace(current.item, note=note))
-
-
-def _record_sync(cfg: Config, next_state: State) -> None:
-    save_state(cfg.state_path, next_state)
-    cfg.run_path.unlink(missing_ok=True)
-
-
-def run(
-    cfg: Config,
-    client: GrampsClient,
-    ask: Ask,
-    say: Say,
-    today: date,
-    feed: Path | None = None,
-    window: date | None = None,
+def capture_status(
+    cfg: Config, pages: Path, feed: Path | None, since_day: date | None, say: Say
 ) -> int:
-    state = load_state(cfg.state_path)
-    snapshot = take_snapshot(client, source_title(cfg.tree))
-    for warning in client.role_warnings():
-        say(f"Warning: {warning}.")
-    _report_status(say, state, snapshot)
-    captured = _step_one(cfg, state, load_run(cfg.run_path), feed, window, ask, say)
-    if captured is None:
-        return 1
-    entries, cutoff, run_state = captured
-    next_state = _next_state(state, entries)
-
-    recent = since(entries, cutoff)
-    notices = build_notices(recent, snapshot)
-    items = combine(work_items(recent), load_pending(cfg.pending_path))
-    if not items and not notices:
-        _record_sync(cfg, next_state)
-        say("Nothing to do.")
-        return 0
-
-    clusters, deferred, run_state = _resolve(cfg, items, snapshot, run_state, ask, say)
-    save_pending(cfg.pending_path, deferred)
-    review = render(cfg.tree, clusters, notices, deferred, today, cutoff)
-    cfg.review_path.write_text(review)
-    changes = unticked(review)
-    say("")
-    say(f"STEP 3 of 3 - review   wrote {cfg.review_path}, {changes} changes")
-    if not changes:
-        _record_sync(cfg, next_state)
-        say("  Nothing to apply; sync recorded.")
-        return 0
-    save_run(cfg.run_path, replace(run_state, next_sync=next_state.last_sync))
-    say("  Apply in Desktop or Web, tick the boxes, then run `geneanet-drift --done`.")
-    return 0
-
-
-def finish(cfg: Config, ask: Ask, say: Say) -> int:
-    run_state = load_run(cfg.run_path)
-    if run_state.next_sync is None:
-        say("No finished run to record; run `geneanet-drift` first.")
-        return 1
-    open_items = (
-        unticked(cfg.review_path.read_text()) if cfg.review_path.is_file() else 0
-    )
-    if open_items:
-        answer = ask(
-            f"{open_items} items are unticked in {cfg.review_path}. Record sync anyway? [y/N] "
-        )
-        if answer.strip().casefold() != "y":
-            say("Nothing recorded.")
-            return 1
-    _record_sync(cfg, State(run_state.next_sync))
-    say(f"Recorded sync through {_moment(run_state.next_sync)}.")
+    entries = load_change_log(pages, feed, cfg.tree)
+    times = page_times(pages, cfg.tree, lambda note: say(f"Warning: {note}"))
+    visits = pages_to_visit(entries, times, _cutoff(since_day))
+    _report_header(say, entries, since_day)
+    _report_visits(say, visits)
+    _report_next(say, pages)
     return 0
 
 
@@ -462,26 +259,35 @@ def _positive(text: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["gedcom"]:
-        return gedcom.main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="geneanet-drift",
-        description="Report a Geneanet tree's recent edits against a Gramps tree.",
+        description="Compare a captured Geneanet tree with a Gramps tree.",
     )
     parser.add_argument(
         "--data-dir", help="private data directory (default: GENEANET_DRIFT_DATA)"
     )
-    parser.add_argument(
-        "--done", action="store_true", help="record the sync after applying the review"
+    commands = parser.add_subparsers(dest="command")
+    status = commands.add_parser(
+        "capture-status",
+        help="list the pages to visit next (the default when no command is given)",
     )
-    parser.add_argument(
+    status.add_argument(
+        "--pages", type=Path, help="captured pages (default: the extension's folder)"
+    )
+    status.add_argument(
+        "--feed", type=Path, help="pasted change log, instead of the captured page"
+    )
+    status.add_argument(
         "--since",
         type=date.fromisoformat,
         metavar="YYYY-MM-DD",
-        help="review changes from this date on, instead of after the last sync",
+        help="list only changes from this date on",
     )
-    parser.add_argument("--feed", type=Path, help="read the change log from this file")
-    commands = parser.add_subparsers(dest="command")
+    commands.add_parser(
+        "gedcom",
+        add_help=False,
+        help="export the captured tree as GEDCOM (see `gedcom -h`)",
+    )
     snapshot = commands.add_parser("snapshot", help="save the Gramps tree to a file")
     snapshot.add_argument("--out", type=Path, required=True, help="JSON file to write")
     review = commands.add_parser("review", help="review the captured tree in a browser")
@@ -504,7 +310,14 @@ def main(argv: list[str] | None = None) -> int:
     undo_command.add_argument(
         "--last", type=_positive, required=True, help="steps to revert"
     )
-    args = parser.parse_args(argv)
+    args, rest = parser.parse_known_args(argv)
+    if args.command == "gedcom":
+        carried = ["--data-dir", args.data_dir] if args.data_dir else []
+        return gedcom.main([*carried, *rest])
+    if rest:
+        parser.error(f"unrecognized arguments: {' '.join(rest)}")
+    if args.command is None:
+        args = parser.parse_args([*argv, "capture-status"])
     try:
         cfg = load_config(args.data_dir, os.environ)
         for warning in cfg.warnings:
@@ -518,11 +331,8 @@ def main(argv: list[str] | None = None) -> int:
             return apply_decisions(cfg, args.pages, input, getpass.getpass, print, now)
         if args.command == "undo":
             return undo_applied(cfg, args.last, input, getpass.getpass, print)
-        if args.done:
-            return finish(cfg, input, print)
-        client = _connect(cfg, getpass.getpass)
-        today = datetime.now().astimezone().date()
-        return run(cfg, client, input, print, today, args.feed, args.since)
+        pages = args.pages or default_pages(cfg.tree)
+        return capture_status(cfg, pages, args.feed, args.since, print)
     except KeyboardInterrupt:
         print(file=sys.stderr)
         return 130

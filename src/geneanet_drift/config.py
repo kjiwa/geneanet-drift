@@ -18,7 +18,6 @@ class Config:
     gramps_url: str
     priority_surnames: tuple[str, ...]
     data_dir: Path
-    cache_dir: Path
     gramps_user: str | None = None
     gramps_password: str | None = field(default=None, repr=False)
     gramps_write_user: str | None = None
@@ -26,16 +25,8 @@ class Config:
     warnings: tuple[str, ...] = ()
 
     @property
-    def state_path(self) -> Path:
-        return self.data_dir / "state.json"
-
-    @property
     def negatives_path(self) -> Path:
         return self.data_dir / "negatives.json"
-
-    @property
-    def pending_path(self) -> Path:
-        return self.data_dir / "pending.json"
 
     @property
     def decisions_path(self) -> Path:
@@ -48,32 +39,6 @@ class Config:
     @property
     def backups_dir(self) -> Path:
         return self.data_dir / "backups"
-
-    @property
-    def feed_path(self) -> Path:
-        return self.cache_dir / "feed.txt"
-
-    @property
-    def review_path(self) -> Path:
-        return self.cache_dir / "review.md"
-
-    @property
-    def run_path(self) -> Path:
-        return self.cache_dir / "run.json"
-
-
-@dataclass(frozen=True)
-class State:
-    last_sync: datetime | None = None
-
-
-@dataclass(frozen=True)
-class Run:
-    """Answers kept while a run is open, so an interrupted wizard resumes."""
-
-    window_start: date | None = None
-    accepted: dict[str, str] = field(default_factory=dict)  # name key -> Gramps ID
-    next_sync: datetime | None = None  # set once the review is written
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -134,9 +99,7 @@ def load_config(
         or env.get("GENEANET_DRIFT_DATA")
         or _xdg(env, "XDG_DATA_HOME", ".local/share") / "geneanet-drift"
     )
-    cache_dir = _xdg(env, "XDG_CACHE_HOME", ".cache") / "geneanet-drift"
-    for directory in (data_dir, cache_dir):
-        ensure_outside_repo(directory, repo_root)
+    ensure_outside_repo(data_dir, repo_root)
 
     env_path = data_dir / ".env"
     env = {**read_env_file(env_path), **env}
@@ -151,13 +114,11 @@ def load_config(
             f"{config_path} needs `tree` and `gramps_url` (or GRAMPS_URL)"
         )
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
     return Config(
         tree=raw["tree"],
         gramps_url=gramps_url.rstrip("/"),
         priority_surnames=tuple(raw.get("priority_surnames", [])),
         data_dir=data_dir,
-        cache_dir=cache_dir,
         gramps_user=env.get("GRAMPS_USER") or raw.get("gramps_user"),
         gramps_password=env.get("GRAMPS_PASSWORD"),
         gramps_write_user=env.get("GRAMPS_WRITE_USER") or raw.get("gramps_write_user"),
@@ -190,47 +151,3 @@ def write_json_atomic(path: Path, value) -> None:
 
 def end_of_day(day: date) -> datetime:
     return datetime.combine(day, time.max)
-
-
-def _parse_moment(raw: str) -> datetime:
-    try:
-        return end_of_day(date.fromisoformat(raw))
-    except ValueError:
-        return datetime.fromisoformat(raw)
-
-
-def _read_moment(raw: str | None) -> datetime | None:
-    return _parse_moment(raw) if raw else None
-
-
-def _iso(moment: datetime | None) -> str | None:
-    return moment.isoformat() if moment else None
-
-
-def load_state(path: Path) -> State:
-    return State(_read_moment(read_json(path, {}).get("last_sync")))
-
-
-def save_state(path: Path, state: State) -> None:
-    write_json(path, {"last_sync": _iso(state.last_sync)})
-
-
-def load_run(path: Path) -> Run:
-    raw = read_json(path, {})
-    window_start = raw.get("window_start")
-    return Run(
-        window_start=date.fromisoformat(window_start) if window_start else None,
-        accepted=dict(raw.get("accepted", {})),
-        next_sync=_read_moment(raw.get("next_sync")),
-    )
-
-
-def save_run(path: Path, run: Run) -> None:
-    write_json(
-        path,
-        {
-            "window_start": run.window_start.isoformat() if run.window_start else None,
-            "accepted": run.accepted,
-            "next_sync": _iso(run.next_sync),
-        },
-    )
