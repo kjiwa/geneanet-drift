@@ -201,19 +201,40 @@ function groupSection(group, people) {
     h("summary", { text: `${group.title} (${count})` }), body);
 }
 
+function groupSections() {
+  const { people } = state.data;
+  return GROUPS.map((group) => groupSection(group, people.filter((p) => p.state === group.state)));
+}
+
+function filterGroups() {
+  document.getElementById("groups").replaceChildren(...groupSections());
+}
+
+function searchField() {
+  let composing = false;
+  const input = h("input", { id: "search", type: "search", value: state.query, autocomplete: "off",
+    oninput: (event) => {
+      state.query = event.target.value;
+      if (!composing) filterGroups();
+    },
+    oncompositionstart: () => { composing = true; },
+    oncompositionend: (event) => {
+      composing = false;
+      state.query = event.target.value;
+      filterGroups();
+    } });
+  return h("div", { class: "field search" }, h("label", { for: "search", text: "Search people by name" }), input);
+}
+
 function listView() {
-  const { summary, people } = state.data;
-  const search = h("div", { class: "field search" },
-    h("label", { for: "search", text: "Search people by name" }),
-    h("input", { id: "search", type: "search", value: state.query, autocomplete: "off",
-      oninput: (event) => { state.query = event.target.value; render({ keepFocus: "search", caret: event.target.selectionStart }); } }));
+  const { summary } = state.data;
   const empty = summary.people === 0
     ? h("p", { class: "status", role: "status", text: "No people were captured, so there is nothing to review." })
     : null;
   return h("div", {},
     h("h1", { tabindex: "-1", text: "Review changes" }),
-    summaryStats(summary), empty, search,
-    ...GROUPS.map((group) => groupSection(group, people.filter((p) => p.state === group.state))));
+    summaryStats(summary), empty, searchField(),
+    h("div", { id: "groups" }, ...groupSections()));
 }
 
 /* Person view */
@@ -340,7 +361,7 @@ function updateApply() {
   document.getElementById("apply").textContent = `Apply ${plural(count, "accepted change", "accepted changes")}`;
 }
 
-function render({ keepFocus = null, caret = null, moveFocus = false } = {}) {
+function render({ keepFocus = null, moveFocus = false } = {}) {
   if (!state.data) {
     view.replaceChildren(routePerson() === null ? skeletonList() : skeletonPerson());
     view.setAttribute("aria-busy", "true");
@@ -354,10 +375,9 @@ function render({ keepFocus = null, caret = null, moveFocus = false } = {}) {
   updateApply();
   if (moveFocus) view.querySelector("h1").focus();
   if (keepFocus) {
-    const target = keepFocus === "search" ? document.getElementById("search") : view.querySelector(`[data-focus="${keepFocus}"]`);
+    const target = view.querySelector(`[data-focus="${keepFocus}"]`);
     if (target) {
       target.focus();
-      if (caret !== null) target.setSelectionRange(caret, caret);
     }
   }
 }

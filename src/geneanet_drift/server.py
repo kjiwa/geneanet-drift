@@ -10,11 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from geneanet_drift.config import Config
+from geneanet_drift.config import Config, ConfigError
 from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
-    REJECTED,
     Decision,
     DecisionError,
     load_decisions,
@@ -83,6 +82,10 @@ class App:
                 self.review, decisions
             ):
                 raise RequestError(HTTPStatus.NOT_FOUND, "unknown change")
+            if change_id in {c.id for c in link_changes(self.review)}:
+                raise RequestError(
+                    HTTPStatus.BAD_REQUEST, "choose a match through the link action"
+                )
             save_decisions(
                 self.decisions_path,
                 self._apply(
@@ -117,9 +120,7 @@ class App:
                 raise RequestError(HTTPStatus.NOT_FOUND, "unknown match")
             decisions = {k: d for k, d in self.decisions().items() if k not in siblings}
             if chosen is not None:
-                for sibling in siblings:
-                    status = ACCEPTED if sibling == chosen else REJECTED
-                    decisions[sibling] = Decision(status)
+                decisions[chosen] = Decision(ACCEPTED)
             save_decisions(self.decisions_path, decisions)
         return {"ok": True}
 
@@ -167,7 +168,10 @@ class Handler(BaseHTTPRequestHandler):
     def _body(self) -> dict:
         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
             raise RequestError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "send JSON")
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as error:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "bad Content-Length") from error
         if not 0 < length <= MAX_BODY:
             raise RequestError(HTTPStatus.BAD_REQUEST, "bad body size")
         try:
@@ -225,6 +229,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._static(path)
         except RequestError as error:
             self._json(error.status, {"error": str(error)})
+        except DecisionError as error:
+            message = f"The saved decisions cannot be read: {error}"
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": message})
 
     def do_GET(self):
         self._route("GET")
@@ -240,7 +247,10 @@ def make_server(cfg: Config, review: Review, port: int = 0) -> ThreadingHTTPServ
 
 
 def serve(cfg: Config, review: Review, port: int, say: Callable[[str], None]) -> int:
-    server = make_server(cfg, review, port)
+    try:
+        server = make_server(cfg, review, port)
+    except OSError as error:
+        raise ConfigError(f"cannot listen on {HOST}:{port}: {error}") from error
     say(f"Review at http://{HOST}:{server.server_address[1]}/ (Ctrl+C to stop).")
     try:
         server.serve_forever()

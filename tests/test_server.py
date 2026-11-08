@@ -17,7 +17,7 @@ from geneanet_drift.decisions import (
 from geneanet_drift.diff import diff_people
 from geneanet_drift.match_tree import match_people
 from geneanet_drift.review_data import Review
-from geneanet_drift.server import TOKEN_HEADER, WEB_DIR, App, make_server
+from geneanet_drift.server import TOKEN_HEADER, WEB_DIR, App, make_server, serve
 from geneanet_drift.wizard import review_tree
 from tests.builders import (
     SOURCE,
@@ -274,16 +274,14 @@ def test_bad_status_is_refused(served):
     assert status == 400
 
 
-def test_choosing_a_candidate_accepts_it_and_rejects_the_others(served):
+def test_choosing_a_candidate_accepts_it_and_leaves_the_others_pending(served):
     client, cfg, _ = served
     wren = people_by_name(client)["Wren Calloway"]
     first, second = (c["change"] for c in wren["candidates"])
     status, _ = client.json("POST", "/api/link", {"person": 3, "change": first})
     assert status == 200
-    assert load_decisions(cfg.decisions_path) == {
-        first: Decision(ACCEPTED),
-        second: Decision(REJECTED),
-    }
+    assert load_decisions(cfg.decisions_path) == {first: Decision(ACCEPTED)}
+    assert second not in load_decisions(cfg.decisions_path)
     chosen = people_by_name(client)["Wren Calloway"]
     assert chosen["state"] == "unchanged"
     assert chosen["mine"]["id"] == "I-w1"
@@ -393,3 +391,52 @@ def test_review_command_rejects_an_invalid_port(tmp_path):
     cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
     with pytest.raises(ConfigError, match="not a port"):
         review_tree(cfg, tmp_path, tmp_path / "tree.json", 70000, print)
+
+
+def test_link_ids_are_not_decided_through_the_decisions_endpoint(served):
+    client, cfg, _ = served
+    candidate = people_by_name(client)["Wren Calloway"]["candidates"][0]["change"]
+    status, body = client.json(
+        "POST", "/api/decisions", {"id": candidate, "status": "rejected"}
+    )
+    assert status == 400
+    assert "link" in body["error"]
+    assert not cfg.decisions_path.exists()
+
+
+def test_corrupt_decisions_file_gives_a_readable_error(served):
+    client, cfg, _ = served
+    cfg.decisions_path.write_text("{not json")
+    row = {"id": "x", "status": "accepted"}
+    for method, path, body in (
+        ("GET", "/api/changes", None),
+        ("GET", "/api/preview", None),
+        ("POST", "/api/decisions", row),
+        ("POST", "/api/link", {"person": 3, "change": None}),
+    ):
+        status, payload = client.json(method, path, body)
+        assert status == 500
+        assert "decisions" in payload["error"]
+
+
+def test_non_integer_content_length_is_a_bad_request(served):
+    client, _, _ = served
+    connection = http.client.HTTPConnection("127.0.0.1", client.port, timeout=5)
+    connection.putrequest("POST", "/api/decisions")
+    for name, value in (
+        (TOKEN_HEADER, client.token),
+        ("Content-Type", "application/json"),
+        ("Content-Length", "abc"),
+    ):
+        connection.putheader(name, value)
+    connection.endheaders()
+    response = connection.getresponse()
+    assert response.status == 400
+    connection.close()
+
+
+def test_review_command_reports_a_port_that_cannot_be_bound(tmp_path, served):
+    _, _, server = served
+    cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
+    with pytest.raises(ConfigError, match="listen"):
+        serve(cfg, synthetic_review(None), server.server_address[1], print)
