@@ -257,3 +257,14 @@ def test_events_where_the_person_is_only_a_witness_are_not_theirs():
         {"ref": "e2", "role": {"string": "Witness"}},
     ]
     assert _events(refs, events) == (events["e1"],)
+
+
+def test_place_title_skips_unnamed_places():
+    from geneanet_drift.gramps import _place_title
+
+    places = {
+        "a": {"name": {"value": "A"}, "placeref_list": [{"ref": "b"}]},
+        "b": {"name": {"value": ""}, "placeref_list": [{"ref": "c"}]},
+        "c": {"name": {"value": "C"}},
+    }
+    assert _place_title("a", places) == "A, C"

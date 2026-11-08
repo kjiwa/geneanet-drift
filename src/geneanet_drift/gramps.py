@@ -388,7 +388,8 @@ def _place_title(handle: str, places: dict[str, dict]) -> str:
     while handle in places and handle not in seen:
         seen.add(handle)
         place = places[handle]
-        names.append(place["name"]["value"])
+        if place["name"].get("value"):
+            names.append(place["name"]["value"])
         parents = place.get("placeref_list") or []
         handle = parents[0]["ref"] if parents else ""
     return ", ".join(names)

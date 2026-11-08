@@ -3,7 +3,7 @@
     docker compose -f tests/integration/compose.yaml up -d
     python tests/integration/seed.py
 
-Re-running on a seeded stack fails at the import step; `docker compose down -v` resets it.
+Re-running on a seeded stack fails when the users are added; `docker compose down -v` resets it.
 """
 
 import json
