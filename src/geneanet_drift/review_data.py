@@ -1,3 +1,4 @@
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
     LINK_PREFIX,
+    PLACE_PREFIX,
     Decision,
     link_negatives,
 )
@@ -21,7 +23,7 @@ from geneanet_drift.diff import (
 )
 from geneanet_drift.feed import page_url
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
-from geneanet_drift.match import load_negatives
+from geneanet_drift.match import load_negatives, normalise
 from geneanet_drift.match_tree import (
     CANDIDATES,
     LINKED,
@@ -101,6 +103,16 @@ def _accepted_links(changes: list[Change], decisions) -> dict[int, str]:
     return found
 
 
+def place_mapping(review: Review, decisions: dict[str, Decision]) -> dict[str, str]:
+    """His place text to the title of the Gramps place chosen for it."""
+    titles = {p.handle: p.title for p in review.tree.places}
+    return {
+        key.removeprefix(PLACE_PREFIX): titles[decision.value]
+        for key, decision in decisions.items()
+        if key.startswith(PLACE_PREFIX) and decision.value in titles
+    }
+
+
 def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
     """Match and diff again with every accepted link chosen and rejected one negative.
 
@@ -108,19 +120,20 @@ def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
     last adds a choice or a negative; the cap turns a broken invariant into an error.
     """
     chosen: dict[int, str] = {}
+    places = place_mapping(review, decisions)
     negatives = set(review.negatives)
     passes = len(review.people) * (len(review.tree.people) + 1) + 2
     for _ in range(passes):
         matches = match_people(
             review.people, review.tree, review.source, negatives, chosen
         )
-        changes = diff_people(review.people, review.tree, matches)
+        changes = diff_people(review.people, review.tree, matches, places)
         found = {**_accepted_links(changes, decisions), **chosen}
         rejected = negatives | link_negatives(changes, decisions)
         if found == chosen and rejected == negatives:
             stable = _stable_candidates(review, negatives, chosen, matches)
             if stable is not matches:
-                changes = diff_people(review.people, review.tree, stable)
+                changes = diff_people(review.people, review.tree, stable, places)
             return Derived(stable, changes)
         chosen, negatives = found, rejected
     raise RuntimeError(f"review matching did not settle in {passes} passes")
@@ -162,18 +175,36 @@ def field_label(field: str) -> str:
     return FIELD_LABELS.get(field) or FIELD_LABELS[field.split(":")[0]]
 
 
+def _day_text(year, month, day) -> str:
+    name = MONTHS[month - 1] if month else None
+    if name and day:
+        return f"{name} {day}, {year}"
+    return f"{name} {year}" if name else str(year)
+
+
+def _core_text(date: dict) -> str:
+    start = _day_text(date["year"], date.get("month"), date.get("day"))
+    if not date.get("end_year"):
+        return start
+    end = _day_text(date["end_year"], date.get("end_month"), date.get("end_day"))
+    if date.get("modifier") == "span":
+        return f"from {start} to {end}"
+    return f"between {start} and {end}"
+
+
 def date_text(date: dict | None) -> str:
-    if not date or date.get("year") is None:
+    if not date:
         return ""
-    year = date["year"]
-    month = MONTHS[date["month"] - 1] if date.get("month") else None
-    if month and date.get("day"):
-        core = f"{month} {date['day']}, {year}"
-    elif month:
-        core = f"{month} {year}"
-    else:
-        core = str(year)
-    return " ".join(p for p in (date.get("modifier"), core) if p)
+    if date.get("modifier") == "text":
+        return date.get("text", "")
+    if date.get("year") is None:
+        return ""
+    modifier = date.get("modifier")
+    words = [date.get("quality")]
+    if modifier in ("before", "after", "about"):
+        words.append(modifier)
+    words.append(_core_text(date))
+    return " ".join(w for w in words if w)
 
 
 def _fact_text(fact: dict) -> str:
@@ -376,11 +407,19 @@ def _waiting_name(review: Review, change: Change) -> str | None:
     return display_name(review.people[change.waiting_on])
 
 
+def _his_place_title(change: Change, places: dict[str, str]) -> str | None:
+    """The Gramps title chosen for the place text on his side of a fact row."""
+    his = change.his
+    place = his.get("place") if isinstance(his, dict) else None
+    return places.get(place) if place else None
+
+
 def row_view(
     review: Review,
     change: Change,
     decisions: dict[str, Decision],
     matches: dict[int, Match],
+    places: dict[str, str],
 ) -> dict:
     kind = editable_kind(change)
     decision = decisions.get(change.id)
@@ -390,6 +429,7 @@ def row_view(
         "label": field_label(change.field),
         "kind": change.kind,
         "his": _his_lines(review, change, matches),
+        "his_place": _his_place_title(change, places),
         "mine": value_lines(change.mine),
         "proposed": _proposed_lines(change),
         "sensitive": change.sensitive,
@@ -463,10 +503,11 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
         target = links if is_link(change) else by_person
         target.setdefault(change.person, []).append(change)
     mine_by_handle = {p.handle: p for p in review.tree.people}
+    places = place_mapping(review, decisions)
     result = []
     for key, person in sorted(review.people.items()):
         rows = [
-            row_view(review, c, decisions, derived.matches)
+            row_view(review, c, decisions, derived.matches, places)
             for c in by_person.get(key, [])
         ]
         match = derived.matches[key]
@@ -557,3 +598,49 @@ def summary_view(people: list[dict], accepted: int) -> dict:
         "unchanged": count("unchanged"),
         "accepted": accepted,
     }
+
+
+PLACE_SUGGESTIONS = 3
+
+
+def his_place_uses(review: Review) -> Counter[str]:
+    return Counter(
+        place
+        for person in review.people.values()
+        for place in (
+            *(e.place for e in person.events),
+            *(u.place for u in person.unions),
+        )
+        if place
+    )
+
+
+def _place_suggestions(review: Review, text: str) -> list[dict]:
+    words = set(normalise(text).split())
+    found = [p for p in review.tree.places if words <= set(normalise(p.title).split())]
+    found.sort(key=lambda p: (len(p.title), p.title))
+    return [{"handle": p.handle, "title": p.title} for p in found[:PLACE_SUGGESTIONS]]
+
+
+def _place_mapping_view(titles: dict[str, str], decision: Decision | None):
+    if decision is None or decision.value not in titles:
+        return None
+    return {"handle": decision.value, "title": titles[decision.value]}
+
+
+def place_titles(review: Review) -> list[dict]:
+    found = sorted(review.tree.places, key=lambda p: (p.title, p.handle))
+    return [{"handle": p.handle, "title": p.title} for p in found]
+
+
+def place_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
+    titles = {p.handle: p.title for p in review.tree.places}
+    return [
+        {
+            "text": text,
+            "uses": uses,
+            "mapping": _place_mapping_view(titles, decisions.get(PLACE_PREFIX + text)),
+            "suggestions": _place_suggestions(review, text),
+        }
+        for text, uses in sorted(his_place_uses(review).items())
+    ]

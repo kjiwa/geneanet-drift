@@ -132,7 +132,8 @@ class _Planner:
         self.rank: dict[str, int] = {}
         self.sex: dict[str, str] = {}
         self.linked: dict[int, str] = {}  # his key -> handle, by accepted link
-        self.new_places: dict[str, tuple[str, str, str | None]] = {}
+        self.new_places: dict[str, tuple[str, str]] = {}  # name key -> handle, title
+        self.snapshot_places = {name_key(p.title) for p in inputs.tree.places}
         self.planned: dict[str, list[str]] = {}  # new family -> children
         self.partners: dict[str, list[str]] = {}  # new family -> partners
 
@@ -168,17 +169,15 @@ class _Planner:
         return self.sex.get(handle, "unknown")
 
     def place(self, title: str) -> str:
-        parts = [p.strip() for p in title.split(",") if p.strip()]
-        handle = None
-        for start in range(len(parts) - 1, -1, -1):
-            key = name_key(", ".join(parts[start:]))
-            known = self.inputs.references.places.get(key)
-            known = known or (self.new_places.get(key) or (None,))[0]
-            if known is None:
-                known = records.handle_for("place", key)
-                self.new_places[key] = (known, parts[start], handle)
-            handle = known
-        return handle or ""
+        key = name_key(title)
+        known = self.inputs.references.places.get(key)
+        if known:
+            return known
+        if key in self.snapshot_places:
+            raise DriftError("place changed since the snapshot; run snapshot again")
+        if key not in self.new_places:
+            self.new_places[key] = (records.handle_for("place", key), title)
+        return self.new_places[key][0]
 
     def url(self, change: Change) -> str:
         person = self.inputs.people[change.person]
@@ -757,10 +756,9 @@ class _Planner:
         if not self.new_places:
             return []
         objects = [
-            records.place(handle, label, parent)
-            for handle, label, parent in self.new_places.values()
+            records.place(handle, title) for handle, title in self.new_places.values()
         ]
-        names = ", ".join(label for _, label, _ in self.new_places.values())
+        names = ", ".join(title for _, title in self.new_places.values())
         ident = records.handle_for("places", *(o["handle"] for o in objects))
         return [
             (

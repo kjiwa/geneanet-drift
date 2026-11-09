@@ -14,6 +14,7 @@ from geneanet_drift.decisions import (
     Decision,
     load_decisions,
 )
+from geneanet_drift.gramps import GrampsPlace
 from geneanet_drift.review_data import Review, derive, people_view
 from geneanet_drift.server import (
     TOKEN_HEADER,
@@ -67,7 +68,8 @@ def synthetic_review(media_dir: Path | None) -> Review:
             gramps("w1", "Wren", "Calloway"),
             gramps("w2", "Wren", "Calloway"),
             gramps("h4", "Sage", "Harlow", citations=(crosswalk("Sage Harlow"),)),
-        ]
+        ],
+        places=[GrampsPlace("pl1", "Lyon, Rhone, France")],
     )
     return Review(
         people, mine, SOURCE, frozenset(), media_dir, "example", "http://gramps.test/"
@@ -477,3 +479,67 @@ def test_a_change_that_waits_on_another_person_cannot_be_decided(tmp_path):
         app.decide({"id": waiting.id, "status": "accepted"})
     assert error.value.status == 400
     assert not app.decisions_path.exists()
+
+
+def test_places_lists_his_texts_and_saves_and_clears_a_mapping(served):
+    client, cfg, _ = served
+    status, payload = client.json("GET", "/api/places")
+    assert status == 200
+    (lyon,) = payload["places"]
+    assert (lyon["text"], lyon["uses"], lyon["mapping"]) == ("Lyon", 1, None)
+    assert [s["handle"] for s in lyon["suggestions"]] == ["pl1"]
+    saved = {"text": "Lyon", "handle": "pl1"}
+    assert client.json("POST", "/api/places", saved)[0] == 200
+    assert load_decisions(cfg.decisions_path) == {"place:Lyon": Decision(EDITED, "pl1")}
+    assert client.json("GET", "/api/places")[1]["places"][0]["mapping"] == {
+        "handle": "pl1",
+        "title": "Lyon, Rhone, France",
+    }
+    assert (
+        client.json("POST", "/api/places", {"text": "Lyon", "handle": None})[0] == 200
+    )
+    assert load_decisions(cfg.decisions_path) == {}
+
+
+def test_places_rejects_an_unknown_text_or_handle(served):
+    client, cfg, _ = served
+    for body in (
+        {"text": "Nowhere", "handle": "pl1"},
+        {"text": "Lyon", "handle": "missing"},
+        {"text": 5, "handle": "pl1"},
+        {"text": ["Lyon"], "handle": "pl1"},
+        {"text": "Lyon", "handle": ["pl1"]},
+    ):
+        assert client.json("POST", "/api/places", body)[0] == 400
+    assert not cfg.decisions_path.exists()
+
+
+def test_a_place_decision_is_not_a_change(served):
+    client, _, _ = served
+    client.json("POST", "/api/places", {"text": "Lyon", "handle": "pl1"})
+    status, payload = client.json("GET", "/api/changes")
+    assert status == 200
+    assert payload["summary"]["accepted"] == 0
+    assert client.json("GET", "/api/preview")[1]["count"] == 0
+
+
+def test_changes_carry_every_gramps_place_title_for_the_datalist(served):
+    client, _, _ = served
+    payload = client.json("GET", "/api/changes")[1]
+    assert payload["place_titles"] == [
+        {"handle": "pl1", "title": "Lyon, Rhone, France"}
+    ]
+
+
+def test_a_row_shows_the_place_chosen_for_his_text(served):
+    client, _, _ = served
+
+    def birth_place():
+        row = first_row(client, "Birth")
+        return row["his_place"], row["id"]
+
+    before, change_id = birth_place()
+    assert before is None
+    client.json("POST", "/api/places", {"text": "Lyon", "handle": "pl1"})
+    after, same_id = birth_place()
+    assert (after, same_id) == ("Lyon, Rhone, France", change_id)

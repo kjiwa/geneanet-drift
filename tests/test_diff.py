@@ -512,3 +512,101 @@ def test_a_media_change_carries_the_titles_of_the_photos_gramps_holds():
     assert only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").mine == {
         "existing": []
     }
+
+
+def test_date_values_add_end_and_text_only_when_present():
+    from geneanet_drift.diff import _date_value
+    from geneanet_drift.gramps import GrampsDate
+
+    plain = _date_value(GrampsDate(1900, 2, 3, None, None, ""))
+    assert set(plain) == {"year", "month", "day", "modifier", "quality"}
+    assert _date_value(his_date(1900, 2, 3)) == plain
+    span = _date_value(GrampsDate(1900, None, None, "range", None, "", 1910, 5, 4))
+    assert (span["end_year"], span["end_month"], span["end_day"]) == (1910, 5, 4)
+    assert "text" not in span
+    text = _date_value(GrampsDate(None, None, None, "text", None, "around the war"))
+    assert text["text"] == "around the war"
+    assert "end_year" not in text
+
+
+def test_change_ids_for_his_dates_are_unchanged():
+    person = his(1, "Rowan", "Ashby", events=(his_event("born", 1950, "Lakeside"),))
+    mine = gramps("g1", "Rowan", "Ashby")
+    change = only(diff_one(person, mine), "event:born")
+    assert change.id == change_id(
+        1,
+        "event:born",
+        {
+            "date": {
+                "year": 1950,
+                "month": None,
+                "day": None,
+                "modifier": None,
+                "quality": None,
+            },
+            "place": "Lakeside",
+        },
+    )
+
+
+MAPPED = {"Lakeside": "Lakeside Village, Old Quarter", "Harbortown": "Harbor Town"}
+
+
+def test_a_mapped_place_proposes_the_gramps_title_and_keeps_his_text():
+    person = his(1, "Rowan", "Ashby", events=(his_event("born", 1951, "Lakeside"),))
+    mine = gramps(
+        "g1",
+        "Rowan",
+        "Ashby",
+        events=(gramps_event("Birth", 1950, "Lakeside Village, Old Quarter"),),
+    )
+    plain = only(diff_one(person, mine), "event:born")
+    people = his_people(person)
+    (mapped,) = diff_people(people, tree([mine]), {1: LINK}, MAPPED)
+    assert mapped.proposed["place"] == "Lakeside Village, Old Quarter"
+    assert mapped.his == plain.his
+    assert mapped.id == plain.id
+
+
+def test_a_mapping_that_makes_a_place_only_row_disappear():
+    person = his(1, "Rowan", "Ashby", events=(his_event("born", 1950, "Harbortown"),))
+    mine = gramps(
+        "g1", "Rowan", "Ashby", events=(gramps_event("Birth", 1950, "Harbor Town"),)
+    )
+    assert only(diff_one(person, mine), "event:born")
+    assert diff_people(his_people(person), tree([mine]), {1: LINK}, MAPPED) == []
+
+
+def test_a_mapped_place_applies_to_a_marriage_and_a_new_person_bundle():
+    union = his_union(7, 2, date=his_date(1979), place="Harbortown")
+    person = his(
+        1,
+        "Rowan",
+        "Ashby",
+        events=(his_event("born", 1950, "Lakeside"),),
+        unions=(union,),
+    )
+    people = his_people(person, his(2, "Nell", "Quill"))
+    matches = {1: Match(NEW), 2: Match(NEW)}
+    changes = diff_people(people, tree([]), matches, MAPPED)
+    bundle = only([c for c in changes if c.person == 1], "person")
+    assert bundle.proposed["events"]["born"]["place"] == "Lakeside Village, Old Quarter"
+    assert bundle.proposed["unions"][0]["place"] == "Harbor Town"
+    assert bundle.his["events"]["born"]["place"] == "Lakeside"
+
+
+def test_a_mapped_place_applies_to_a_new_marriage():
+    union = his_union(7, 2, date=his_date(1979), place="Harbortown")
+    changes = union_case(union, [])
+    plain = only(changes, "union:7")
+    person = his(1, "Rowan", "Ashby", unions=(union,))
+    people = his_people(person, his(2, "Nell", "Quill"))
+    mine = [gramps("g1", "Rowan", "Ashby"), gramps("g2", "Nell", "Quill")]
+    matches = {1: LINK, 2: Match(LINKED, "g2")}
+    (mapped,) = [
+        c
+        for c in diff_people(people, tree(mine), matches, MAPPED)
+        if c.field == "union:7"
+    ]
+    assert mapped.proposed["place"] == "Harbor Town"
+    assert mapped.id == plain.id

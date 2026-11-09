@@ -11,10 +11,11 @@ from geneanet_drift.gramps import (
     GrampsFullPerson,
     GrampsMedia,
     GrampsNote,
+    GrampsPlace,
     GrampsTree,
 )
 
-FORMAT = 2
+FORMAT = 3
 
 
 def _date(raw: dict | None) -> GrampsDate | None:
@@ -68,10 +69,14 @@ def tree_to_json(tree: GrampsTree) -> dict:
 def tree_from_json(raw: dict) -> GrampsTree:
     try:
         if raw.get("format") != FORMAT:
-            raise GrampsError(f"unsupported snapshot format {raw.get('format')!r}")
+            raise GrampsError(
+                f"unsupported snapshot format {raw.get('format')!r}; "
+                "run geneanet-drift snapshot again"
+            )
         return GrampsTree(
             tuple(_person(p) for p in raw["people"]),
             tuple(_family(f) for f in raw["families"]),
+            tuple(GrampsPlace(**p) for p in raw["places"]),
         )
     except (KeyError, TypeError, AttributeError, ValueError) as error:
         raise GrampsError(f"unreadable snapshot: {error!r}") from error

@@ -195,14 +195,13 @@ def note(handle: str, text: str, kind: int) -> dict:
     }
 
 
-def place(handle: str, label: str, parent: str | None) -> dict:
-    refs = [{"_class": "PlaceRef", "ref": parent}] if parent else []
+def place(handle: str, label: str) -> dict:
     return {
         "_class": "Place",
         "handle": handle,
         "name": {"_class": "PlaceName", "value": label},
         "place_type": typed("PlaceType", UNKNOWN),
-        "placeref_list": refs,
+        "placeref_list": [],
     }
 
 

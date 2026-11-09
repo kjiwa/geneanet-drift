@@ -315,6 +315,15 @@ def test_date_ranges_keep_their_end_year_and_short_datevals_do_not_crash():
     assert _date({"dateval": [0, 1], "text": "x"}).month == 1
 
 
+def test_date_ranges_keep_their_end_month_and_day():
+    from geneanet_drift.gramps import _date
+
+    span = _date({"dateval": [2, 3, 1900, False, 4, 5, 1910, False], "modifier": 4})
+    assert (span.end_year, span.end_month, span.end_day) == (1910, 5, 4)
+    plain = _date({"dateval": [2, 3, 1900, False], "modifier": 0})
+    assert (plain.end_year, plain.end_month, plain.end_day) == (None, None, None)
+
+
 def test_events_where_the_person_is_only_a_witness_are_not_theirs():
     from geneanet_drift.gramps import _events
 

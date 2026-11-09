@@ -91,6 +91,8 @@ class GrampsDate:
     quality: str | None
     text: str
     end_year: int | None = None
+    end_month: int | None = None
+    end_day: int | None = None
 
 
 @dataclass(frozen=True)
@@ -155,9 +157,16 @@ class GrampsFullPerson:
 
 
 @dataclass(frozen=True)
+class GrampsPlace:
+    handle: str
+    title: str
+
+
+@dataclass(frozen=True)
 class GrampsTree:
     people: tuple[GrampsFullPerson, ...]
     families: tuple[GrampsFamily, ...]
+    places: tuple[GrampsPlace, ...]
 
 
 def urllib_transport(method, url, headers, body):
@@ -405,9 +414,9 @@ def _surnames(name: dict) -> str:
     )
 
 
-def _end_year(raw: dict) -> int | None:
+def _end_part(raw: dict, index: int) -> int | None:
     dateval = raw.get("dateval") or []
-    return (dateval[6] or None) if len(dateval) > 6 else None
+    return (dateval[index] or None) if len(dateval) > index else None
 
 
 def _date(raw: dict | None) -> GrampsDate | None:
@@ -423,7 +432,9 @@ def _date(raw: dict | None) -> GrampsDate | None:
         DATE_MODIFIERS.get(raw.get("modifier", 0)),
         DATE_QUALITIES.get(raw.get("quality", 0)),
         text,
-        _end_year(raw),
+        _end_part(raw, 6),
+        _end_part(raw, 5),
+        _end_part(raw, 4),
     )
 
 
@@ -529,6 +540,7 @@ def take_tree(client: GrampsClient) -> GrampsTree:
             for raw in client.get_all("/api/people/")
         ),
         tuple(_family(raw, events) for raw in client.get_all("/api/families/")),
+        tuple(GrampsPlace(h, _place_title(h, places)) for h in places),
     )
 
 

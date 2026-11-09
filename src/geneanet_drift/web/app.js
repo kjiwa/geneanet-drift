@@ -10,7 +10,8 @@ const GROUPS = [
 const STATUS_LABELS = { accepted: "Accepted", rejected: "Rejected", edited: "Edited" };
 const NOT_REVIEWED = "Not reviewed";
 
-const state = { data: null, query: "", open: {}, editing: new Set(), errors: {} };
+const PLACE_LIST = "place-titles";
+const state = { data: null, places: null, query: "", open: {}, editing: new Set(), errors: {} };
 const view = document.getElementById("view");
 
 function h(tag, props = {}, ...kids) {
@@ -124,6 +125,7 @@ async function mutate(path, body) {
     flash("");
     await api(path, body);
     state.data = await api("/api/changes");
+    if (routePlaces()) state.places = (await api("/api/places")).places;
   } catch (error) {
     flash(error.message);
   }
@@ -233,7 +235,9 @@ function listView() {
     : null;
   return h("div", {},
     h("h1", { tabindex: "-1", text: "Review changes" }),
-    summaryStats(summary), empty, searchField(),
+    summaryStats(summary), empty,
+    h("p", { class: "links" }, h("a", { class: "button", href: "#/places", text: "Places" })),
+    searchField(),
     h("div", { id: "groups" }, ...groupSections()));
 }
 
@@ -253,7 +257,7 @@ function editFields(row) {
       h("div", { class: "field" }, h("label", { for: `${row.id}-date`, text: "Date, as you want it written" }),
         h("input", { id: `${row.id}-date`, name: "date_text", value: current.date_text, "data-focus": `${row.id}:value`, ...common })),
       h("div", { class: "field" }, h("label", { for: `${row.id}-place`, text: "Place" }),
-        h("input", { id: `${row.id}-place`, name: "place", value: current.place, ...common }), message),
+        h("input", { id: `${row.id}-place`, name: "place", value: current.place, list: PLACE_LIST, autocomplete: "off", ...common }), message),
     ];
   }
   const control = row.editable === "note"
@@ -306,6 +310,7 @@ function changeRow(row) {
       text: "Sensitive: this note may hold private contact details. Read it before accepting." }) : null,
     h("div", { class: "compare" },
       h("div", { class: "cell" }, h("p", { class: "cell-label", text: "His tree" }), ...lines(row.his, both ? row.mine : [], hisEmpty),
+        row.his_place ? h("p", { class: "muted", text: `Your place: "${row.his_place}"` }) : null,
         row.photo ? h("img", { class: "thumb", src: row.photo, alt: row.his[0] || "Captured photo" }) : null),
       h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Mine (Gramps)" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
     row.proposed ? h("p", { class: "muted", text: `Gramps would hold: ${row.proposed.join("; ")}` }) : null,
@@ -349,12 +354,17 @@ function personSummary(person) {
   return h("p", { class: "muted", text: base.filter(Boolean).join(". ") || "No dates recorded." });
 }
 
+function placeDatalist() {
+  return h("datalist", { id: PLACE_LIST }, ...state.data.place_titles.map((place) => h("option", { value: place.title })));
+}
+
 function personView(person) {
   const rows = person.changes;
   const body = rows.length
     ? rows.map(changeRow)
     : [h("p", { class: "status", role: "status", text: person.state === "needs_match" ? "Choose a match to see the changes." : "No differences from Gramps." })];
   return h("div", {},
+    placeDatalist(),
     h("a", { class: "back", href: "#/", text: "Back to all people" }),
     h("h1", { tabindex: "-1", text: person.name }),
     personSummary(person),
@@ -363,7 +373,79 @@ function personView(person) {
     h("h2", { text: `Changes (${rows.filter((r) => !r.informational).length} to review)` }), ...body);
 }
 
+/* Places view */
+
+function placeStatus(place) {
+  if (!place.mapping) return h("p", { text: `Will create a new place named "${place.text}"` });
+  return h("p", {}, `Your place: "${place.mapping.title}"`);
+}
+
+function placeButton(place, index, action, label, handle) {
+  return h("button", { class: "button", type: "button", "data-focus": `place-${index}:${action}`, text: label,
+    onclick: () => mutate("/api/places", { text: place.text, handle }) });
+}
+
+function placeForm(place, index) {
+  const key = `place-${index}`;
+  const error = state.errors[key];
+  const form = h("form", {
+    onsubmit: (event) => {
+      event.preventDefault();
+      const title = new FormData(form).get("title");
+      const found = state.data.place_titles.find((p) => p.title === title);
+      state.errors[key] = found ? null : "Choose one of the Gramps place titles in the list.";
+      if (found) mutate("/api/places", { text: place.text, handle: found.handle });
+      else render({ keepFocus: `${key}:title` });
+    },
+  },
+  h("div", { class: "field" }, h("label", { for: `${key}-title`, text: "Another Gramps place" }),
+    h("input", { id: `${key}-title`, name: "title", list: PLACE_LIST, autocomplete: "off", "data-focus": `${key}:title`,
+      "aria-invalid": error ? "true" : null, "aria-describedby": error ? `${key}-error` : null }),
+    error ? h("p", { class: "error", id: `${key}-error`, text: error }) : null),
+  h("div", { class: "actions" }, h("button", { class: "button", type: "submit", text: "Save" })));
+  return form;
+}
+
+function placeRow(place, index) {
+  const chosen = place.mapping && place.mapping.handle;
+  const suggestions = place.suggestions.filter((s) => s.handle !== chosen);
+  return h("article", { class: "row", "aria-label": place.text },
+    h("div", { class: "row-head" }, h("h3", { text: `"${place.text}"` }),
+      h("span", { class: "muted", text: `Used ${plural(place.uses, "time", "times")}` })),
+    placeStatus(place),
+    h("div", { class: "actions" },
+      place.mapping ? placeButton(place, index, "clear", "Clear", null) : null,
+      ...suggestions.map((s) => placeButton(place, index, `use-${s.handle}`, `Use ${s.title}`, s.handle))),
+    placeForm(place, index));
+}
+
+function placesView() {
+  return h("div", {},
+    placeDatalist(),
+    h("a", { class: "back", href: "#/", text: "Back to all people" }),
+    h("h1", { tabindex: "-1", text: "Places" }),
+    h("p", { class: "muted", text: "Each place text in his tree and the Gramps place it becomes. A text with no choice creates a new place when applied." }),
+    state.places.length
+      ? state.places.map(placeRow)
+      : h("p", { class: "status", role: "status", text: "No place texts were captured." }));
+}
+
 /* Routing and rendering */
+
+function routePlaces() {
+  return location.hash === "#/places";
+}
+
+async function loadPlaces() {
+  try {
+    state.places = (await api("/api/places")).places;
+    state.placesFailed = false;
+  } catch (error) {
+    state.placesFailed = true;
+    flash(error.message);
+  }
+  render({ moveFocus: true });
+}
 
 function routePerson() {
   const found = location.hash.match(/^#\/person\/(\d+)$/);
@@ -381,11 +463,25 @@ function render({ keepFocus = null, moveFocus = false } = {}) {
     view.setAttribute("aria-busy", "true");
     return;
   }
+  if (routePlaces() && state.places === null && state.placesFailed) {
+    view.replaceChildren(h("div", {},
+      h("a", { class: "back", href: "#/", text: "Back to all people" }),
+      h("h1", { tabindex: "-1", text: "Places" }),
+      h("p", { class: "status", role: "status", text: "The places could not be loaded." }),
+      h("button", { class: "button", type: "button", text: "Try again", onclick: loadPlaces })));
+    view.removeAttribute("aria-busy");
+    return;
+  }
+  if (routePlaces() && state.places === null) {
+    view.replaceChildren(skeletonPerson());
+    view.setAttribute("aria-busy", "true");
+    return;
+  }
   view.removeAttribute("aria-busy");
   const key = routePerson();
   const person = key === null ? null : state.data.people.find((p) => p.key === key);
-  view.replaceChildren(person ? personView(person) : listView());
-  document.title = person ? `${person.name} - Review changes` : "Review changes";
+  view.replaceChildren(routePlaces() ? placesView() : person ? personView(person) : listView());
+  document.title = routePlaces() ? "Places - Review changes" : person ? `${person.name} - Review changes` : "Review changes";
   updateApply();
   if (moveFocus) view.querySelector("h1").focus();
   if (keepFocus) {
@@ -423,11 +519,12 @@ async function start() {
   initTheme();
   document.getElementById("apply").addEventListener("click", openPlan);
   document.getElementById("plan-close").addEventListener("click", () => document.getElementById("plan").close());
-  window.addEventListener("hashchange", () => render({ moveFocus: true }));
+  window.addEventListener("hashchange", () => (routePlaces() ? loadPlaces() : render({ moveFocus: true })));
   render();
   try {
     state.data = await api("/api/changes");
-    render();
+    if (routePlaces()) await loadPlaces();
+    else render();
   } catch (error) {
     view.replaceChildren(h("p", { class: "status", "data-kind": "error", role: "alert", text: `The review could not load: ${error.message}` }));
   }

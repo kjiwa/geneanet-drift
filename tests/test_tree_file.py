@@ -21,13 +21,23 @@ def test_tree_round_trips_through_a_file(tree_client, tmp_path):
 
 def test_serialised_tree_is_plain_json(tree_client):
     text = json.dumps(tree_to_json(take_tree(tree_client)))
-    assert json.loads(text)["format"] == 2
+    assert json.loads(text)["format"] == 3
 
 
-@pytest.mark.parametrize("raw", [{}, {"format": 1}])
+@pytest.mark.parametrize("raw", [{}, {"format": 1}, {"format": 2}])
 def test_unknown_format_is_refused(raw):
-    with pytest.raises(GrampsError, match="format"):
+    with pytest.raises(GrampsError, match="snapshot again"):
         tree_from_json(raw)
+
+
+def test_places_round_trip_with_their_titles(tree_client, tmp_path):
+    tree = take_tree(tree_client)
+    assert ("pl1", "Ardmoor, Fenwick, Eastmere") in [
+        (p.handle, p.title) for p in tree.places
+    ]
+    path = tmp_path / "tree.json"
+    write_tree(path, tree)
+    assert read_tree(path).places == tree.places
 
 
 def test_non_object_snapshot_is_refused():
@@ -83,7 +93,7 @@ def test_snapshot_command_reaches_the_snapshot_step(
     assert out.is_file()
 
 
-@pytest.mark.parametrize("text", ["{not json", "[]", '{"format": 2, "people": 3}'])
+@pytest.mark.parametrize("text", ["{not json", "[]", '{"format": 3, "people": 3}'])
 def test_malformed_snapshot_file_raises_gramps_error(tmp_path, text):
     path = tmp_path / "tree.json"
     path.write_text(text)
