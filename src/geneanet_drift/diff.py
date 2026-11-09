@@ -199,7 +199,14 @@ def _gender_changes(person: Person, mine: GrampsFullPerson):
     )
 
 
+def _is_known_name(person: Person, mine: GrampsFullPerson) -> bool:
+    known = {normalise(n) for n in (*mine.other_names, f"{mine.given} {mine.surname}")}
+    return normalise(f"{person.given} {person.surname}") in known
+
+
 def _name_changes(person: Person, mine: GrampsFullPerson):
+    if _is_known_name(person, mine):
+        return
     yield from _scalar_changes(person.key, "given", person.given, mine.given)
     yield from _scalar_changes(person.key, "surname", person.surname, mine.surname)
 

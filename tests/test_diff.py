@@ -200,6 +200,14 @@ def test_occupation_comes_from_the_occupation_event_description():
     assert (change.kind, change.his, change.mine) == (DIFFERS, "Carpenter", "Joiner")
 
 
+def test_his_name_matching_a_gramps_alternate_name_is_not_a_name_change():
+    person = his(1, "Rowan", "Ashby")
+    mine = gramps("g1", "Rowan", "Brook", other_names=("Rowan Ashby",))
+    assert fields(diff_one(person, mine)) == set()
+    other = gramps("g1", "Rowan", "Brook", other_names=("Rowan Cole",))
+    assert only(diff_one(person, other), "surname").kind == DIFFERS
+
+
 def test_other_names_notes_media_and_sources_report_only_what_is_absent():
     person = his(
         1,
