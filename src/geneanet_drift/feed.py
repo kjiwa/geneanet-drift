@@ -53,6 +53,12 @@ def person_url(tree: str, name: str) -> str:
     return f"{tree_url(tree)}?{query}"
 
 
+def page_url(tree: str, address: tuple[str, str, str]) -> str:
+    surname, given, occurrence = address
+    query = {"n": surname, "p": given, "oc": occurrence}
+    return f"{tree_url(tree)}?{urlencode(query)}"
+
+
 def name_key(name: str) -> str:
     return " ".join(name.casefold().split())
 

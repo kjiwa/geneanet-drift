@@ -200,6 +200,14 @@ def test_occupation_comes_from_the_occupation_event_description():
     assert (change.kind, change.his, change.mine) == (DIFFERS, "Carpenter", "Joiner")
 
 
+def test_his_name_matching_a_gramps_alternate_name_is_not_a_name_change():
+    person = his(1, "Rowan", "Ashby")
+    mine = gramps("g1", "Rowan", "Brook", other_names=("Rowan Ashby",))
+    assert fields(diff_one(person, mine)) == set()
+    other = gramps("g1", "Rowan", "Brook", other_names=("Rowan Cole",))
+    assert only(diff_one(person, other), "surname").kind == DIFFERS
+
+
 def test_other_names_notes_media_and_sources_report_only_what_is_absent():
     person = his(
         1,
@@ -486,3 +494,21 @@ def test_id_survives_an_edit_to_my_side_but_not_to_his():
     assert before.id == after.id
     renamed = {**people, 1: his(1, "Rowann", "Ashby", public_name="Rowan Ashby")}
     assert only(run(renamed, gramps_tree), "given").id != before.id
+
+
+def test_a_media_change_carries_the_titles_of_the_photos_gramps_holds():
+    person = his(
+        1, "Rowan", "Ashby", media=(Media(1, "Harvest", None, "o", "t", False),)
+    )
+    held = (
+        GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),
+        GrampsMedia("m2", "", "scans/letter.png", "image/png"),
+    )
+    change = only(diff_one(person, gramps("g1", "Rowan", "Ashby", media=held)), "media")
+    assert change.mine == {"existing": ["Wedding portrait", "letter.png"]}
+    assert (
+        change.id == only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").id
+    )
+    assert only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").mine == {
+        "existing": []
+    }

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from geneanet_drift.apply import source_title
@@ -19,10 +19,12 @@ from geneanet_drift.diff import (
     Change,
     diff_people,
 )
+from geneanet_drift.feed import page_url
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import (
     CANDIDATES,
+    LINKED,
     NEW,
     Match,
     display_name,
@@ -63,6 +65,8 @@ class Review:
     source: str
     negatives: frozenset[tuple[str, str]]
     media_dir: Path | None
+    tree_name: str
+    gramps_url: str
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,8 @@ def load_review(cfg: Config, pages_dir: Path, snapshot: Path) -> Review:
         source_title(cfg.tree),
         frozenset(load_negatives(cfg.negatives_path)),
         media if media.is_dir() else None,
+        cfg.tree,
+        cfg.gramps_url,
     )
 
 
@@ -112,9 +118,36 @@ def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
         found = {**_accepted_links(changes, decisions), **chosen}
         rejected = negatives | link_negatives(changes, decisions)
         if found == chosen and rejected == negatives:
-            return Derived(matches, changes)
+            stable = _stable_candidates(review, negatives, chosen, matches)
+            if stable is not matches:
+                changes = diff_people(review.people, review.tree, stable)
+            return Derived(stable, changes)
         chosen, negatives = found, rejected
     raise RuntimeError(f"review matching did not settle in {passes} passes")
+
+
+def _stable_candidates(
+    review: Review,
+    negatives: set[tuple[str, str]],
+    chosen: dict[int, str],
+    matches: dict[int, Match],
+) -> dict[int, Match]:
+    """Offer a chosen person the candidates seen before any choice, plus the choice.
+
+    Relatives matched because of a choice would otherwise add candidates.
+    """
+    if not chosen:
+        return matches
+    baseline = match_people(review.people, review.tree, review.source, negatives)
+    return {
+        key: replace(
+            match,
+            candidates=tuple(dict.fromkeys([*baseline[key].candidates, chosen[key]])),
+        )
+        if key in chosen
+        else match
+        for key, match in matches.items()
+    }
 
 
 def link_changes(review: Review, decisions: dict[str, Decision]) -> list[Change]:
@@ -156,6 +189,12 @@ def _union_lines(union: dict) -> list[str]:
     return lines
 
 
+def _existing_media_lines(titles: list[str]) -> list[str]:
+    if not titles:
+        return ["No photos in Gramps."]
+    return [f"Already in Gramps: {', '.join(titles)}"]
+
+
 def value_lines(value) -> list[str]:
     if value is None:
         return []
@@ -169,12 +208,46 @@ def value_lines(value) -> list[str]:
         return [f"{value['kind']}: {value['text']}"]
     if "fact" in value:
         return [f"{value['fact']}: {value['text']}"]
+    if "existing" in value:
+        return _existing_media_lines(value["existing"])
     if "title" in value:
         return [p for p in (value["title"] or "Untitled", value["date"]) if p]
     return []
 
 
-def person_lines(person: Person) -> list[str]:
+def _relative_text(review: Review, key: int, matches: dict[int, Match]) -> str:
+    match = matches[key]
+    if match.kind == LINKED:
+        mine = next(p for p in review.tree.people if p.handle == match.handle)
+        return f"{display_name(review.people[key])} (in Gramps: {mine.gramps_id})"
+    return _marked(display_name(review.people[key]), key, matches)
+
+
+def _relative_texts(review: Review, refs, matches: dict[int, Match]) -> list[str]:
+    return [
+        _relative_text(review, r.key, matches) for r in refs if r.key in review.people
+    ]
+
+
+def _relation_lines(
+    review: Review, person: Person, matches: dict[int, Match]
+) -> list[str]:
+    lines = [
+        f"Parent: {text}" for text in _relative_texts(review, person.parents, matches)
+    ]
+    for union in person.unions:
+        lines += [
+            f"Spouse: {text}"
+            for text in _relative_texts(review, [union.spouse], matches)
+        ]
+        if children := _relative_texts(review, union.children, matches):
+            lines.append(f"Children: {', '.join(children)}")
+    return lines
+
+
+def person_lines(
+    review: Review, person: Person, matches: dict[int, Match]
+) -> list[str]:
     lines = [display_name(person), f"Gender: {person.sex}"]
     if person.occupation:
         lines.append(f"Occupation: {person.occupation}")
@@ -182,9 +255,8 @@ def person_lines(person: Person) -> list[str]:
         parts = (event.date and event.date.text, event.place)
         if text := ", ".join(p for p in parts if p):
             lines.append(f"{event.kind.capitalize()}: {text}")
+    lines += _relation_lines(review, person, matches)
     for count, noun in (
-        (len(person.parents), "parent"),
-        (len(person.unions), "union"),
         (len(person.notes), "note"),
         (len(person.media), "photo or document"),
     ):
@@ -290,15 +362,12 @@ def _marked_his(review: Review, change: Change, matches: dict[int, Match]):
     return _marked_union(review, change, matches)
 
 
-def _his_lines(
-    review: Review, change: Change, matches: dict[int, Match] | None = None
-) -> list[str]:
+def _his_lines(review: Review, change: Change, matches: dict[int, Match]) -> list[str]:
     if change.kind == NEW_PERSON:
-        return person_lines(review.people[change.person])
+        return person_lines(review, review.people[change.person], matches)
     if is_link(change):
         return value_lines(change.mine)
-    his = change.his if matches is None else _marked_his(review, change, matches)
-    return value_lines(his)
+    return value_lines(_marked_his(review, change, matches))
 
 
 def _waiting_name(review: Review, change: Change) -> str | None:
@@ -352,10 +421,24 @@ def _mine_name(person: GrampsFullPerson) -> str:
     return f"{person.given} {person.surname}".strip()
 
 
+def _mine_url(review: Review, mine: GrampsFullPerson) -> str | None:
+    if not review.gramps_url:
+        return None
+    return f"{review.gramps_url.rstrip('/')}/person/{mine.gramps_id}"
+
+
+def _his_url(review: Review, person: Person) -> str | None:
+    return page_url(review.tree_name, person.address) if person.address else None
+
+
 def _candidate_view(
-    mine: GrampsFullPerson, change: Change, decisions: dict[str, Decision]
+    review: Review,
+    mine: GrampsFullPerson,
+    change: Change,
+    decisions: dict[str, Decision],
 ) -> dict:
     return {
+        "mine_url": _mine_url(review, mine),
         "change": change.id,
         "gramps_id": mine.gramps_id,
         "name": _mine_name(mine),
@@ -396,11 +479,19 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
                 "name": display_name(person),
                 "years": _his_years(person),
                 "state": _state(rows, match.handle is not None, new),
-                "mine": found and {"id": found.gramps_id, "name": _mine_name(found)},
+                "his_url": _his_url(review, person),
+                "mine": found
+                and {
+                    "id": found.gramps_id,
+                    "name": _mine_name(found),
+                    "url": _mine_url(review, found),
+                },
                 "why": match.why,
                 "changes": rows,
                 "candidates": [
-                    _candidate_view(mine_by_handle[c.proposed["handle"]], c, decisions)
+                    _candidate_view(
+                        review, mine_by_handle[c.proposed["handle"]], c, decisions
+                    )
                     for c in links.get(key, [])
                 ],
                 "actionable": len(actionable),
@@ -410,14 +501,20 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
     return result
 
 
-def accepted_changes(
-    review: Review, decisions: dict[str, Decision]
+def _accepted(
+    changes: list[Change], decisions: dict[str, Decision]
 ) -> list[tuple[Change, Decision]]:
     return [
         (c, decisions[c.id])
-        for c in derive(review, decisions).changes
+        for c in changes
         if c.id in decisions and decisions[c.id].status in (ACCEPTED, EDITED)
     ]
+
+
+def accepted_changes(
+    review: Review, decisions: dict[str, Decision]
+) -> list[tuple[Change, Decision]]:
+    return _accepted(derive(review, decisions).changes, decisions)
 
 
 def _verb(change: Change) -> str:
@@ -430,7 +527,8 @@ def _verb(change: Change) -> str:
 
 def preview_view(review: Review, decisions: dict[str, Decision]) -> dict:
     items = []
-    for change, decision in accepted_changes(review, decisions):
+    derived = derive(review, decisions)
+    for change, decision in _accepted(derived.changes, decisions):
         edited = decision.status == EDITED
         items.append(
             {
@@ -439,7 +537,7 @@ def preview_view(review: Review, decisions: dict[str, Decision]) -> dict:
                 "label": field_label(change.field),
                 "lines": edit_lines(editable_kind(change), decision.value)
                 if edited
-                else _his_lines(review, change),
+                else _his_lines(review, change, derived.matches),
                 "edited": edited,
                 "sensitive": change.sensitive,
             }

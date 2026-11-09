@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from geneanet_drift.capture import Media, Note
+from geneanet_drift.capture import Address, Media, Note
 from geneanet_drift.config import Config, ConfigError
 from geneanet_drift.decisions import (
     ACCEPTED,
@@ -49,6 +49,7 @@ def synthetic_review(media_dir: Path | None) -> Review:
             occupation="Miller",
             notes=(Note("Contact", "call 555-0100"),),
             media=(Media(7, "Harvest", None, "o", "t", False),),
+            address=Address("ashby", "rowan", 0),
         ),
         his(2, "Ivy", "Marlowe", sex="female", events=(his_event("born", 1900),)),
         his(3, "Wren", "Calloway"),
@@ -68,7 +69,9 @@ def synthetic_review(media_dir: Path | None) -> Review:
             gramps("h4", "Sage", "Harlow", citations=(crosswalk("Sage Harlow"),)),
         ]
     )
-    return Review(people, mine, SOURCE, frozenset(), media_dir)
+    return Review(
+        people, mine, SOURCE, frozenset(), media_dir, "example", "http://gramps.test/"
+    )
 
 
 class Client:
@@ -150,6 +153,17 @@ def test_changes_are_grouped_by_state(served):
         "accepted": 0,
     }
     assert len(people["Wren Calloway"]["candidates"]) == 2
+
+
+def test_people_and_candidates_carry_links_to_both_trees(served):
+    client, _, _ = served
+    people = people_by_name(client)
+    rowan = people["Rowan Ashby"]
+    assert rowan["his_url"].endswith("/example_w?n=ashby&p=rowan&oc=0")
+    assert rowan["mine"]["url"] == "http://gramps.test/person/I-h1"
+    assert people["Ivy Marlowe"]["his_url"] is None
+    urls = {c["mine_url"] for c in people["Wren Calloway"]["candidates"]}
+    assert urls == {"http://gramps.test/person/I-w1", "http://gramps.test/person/I-w2"}
 
 
 def test_rows_carry_both_sides_and_flags(served):

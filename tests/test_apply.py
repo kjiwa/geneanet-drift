@@ -533,6 +533,8 @@ def test_an_upload_writes_the_file_names_it_and_attaches_it(tmp_path):
     assert server.store["/api/media/media1"]["desc"] == "Mill"
     assert server.store["/api/media/media1"]["mime"] == "image/jpeg"
     assert server.store["/api/people/h1"]["media_list"][0]["ref"] == "media1"
+    notes = [v for k, v in server.store.items() if k.startswith("/api/notes/")]
+    assert not any("existing" in str(n) for n in notes)
 
 
 def test_undo_reverts_the_newest_steps_newest_transaction_first(tmp_path):

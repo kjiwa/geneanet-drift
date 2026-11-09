@@ -1,4 +1,6 @@
+from geneanet_drift.capture import Address, Media, Note
 from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
+from geneanet_drift.gramps import GrampsMedia
 from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
     Review,
@@ -22,8 +24,16 @@ from tests.builders import (
 )
 
 
-def review(people, gramps_tree, negatives=frozenset()):
-    return Review(his_people(*people), gramps_tree, SOURCE, frozenset(negatives), None)
+def review(people, gramps_tree, negatives=frozenset(), gramps_url="http://gramps.test"):
+    return Review(
+        his_people(*people),
+        gramps_tree,
+        SOURCE,
+        frozenset(negatives),
+        None,
+        "example",
+        gramps_url,
+    )
 
 
 def twin_review():
@@ -225,3 +235,138 @@ def test_conflicting_accepted_links_for_one_person_settle_on_the_first():
     decisions = {first.id: Decision(ACCEPTED), second.id: Decision(ACCEPTED)}
     matches = derive(rev, decisions).matches
     assert matches[1].handle == first.proposed["handle"]
+
+
+def three_candidate_review():
+    mine = tree(
+        [
+            gramps("pa", "Hugh", "Ashby"),
+            gramps("pb", "Hugh", "Ashby"),
+            gramps("pc", "Hugh", "Ashby"),
+            gramps("mm", "Ione", "Quill", gender="unknown"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+            gramps("kb", "Rowan", "Ashby", parent_families=("fb",)),
+            gramps("kc", "Rowan", "Ashby", parent_families=("fc",)),
+        ],
+        [
+            family("fa", father="pa", children=["ka"]),
+            family("fb", father="pb", mother="mm", children=["kb"]),
+            family("fc", father="pc", children=["kc"]),
+        ],
+    )
+    people = [
+        his(1, "Hugh", "Ashby", unions=(his_union(1, 9, children=[2]),)),
+        his(2, "Rowan", "Ashby", parents=(ref(1),)),
+        his(9, "Mara", "Quill"),
+    ]
+    return review(people, mine)
+
+
+def test_choosing_among_three_candidates_keeps_the_list_at_three():
+    rev = three_candidate_review()
+    before = derive(rev, {}).matches[1].candidates
+    chosen = link_to(rev, 1, "I-pb")
+    after = derive(rev, {chosen.id: Decision(ACCEPTED)}).matches[1]
+    assert len(before) == 3
+    assert after.handle == "pb"
+    assert after.candidates == before
+    rows = link_changes(rev, {chosen.id: Decision(ACCEPTED)})
+    assert len([c for c in rows if c.person == 1]) == 3
+
+
+def new_person_lines(rev, key=2):
+    person = next(p for p in people_view(rev, {}) if p["key"] == key)
+    return next(r["his"] for r in person["changes"] if r["label"] == "New person")
+
+
+def test_a_new_person_lists_linked_and_new_parents_with_their_match_state():
+    mine = tree([gramps("hb", "Hugh", "Ashby", citations=(crosswalk("Hugh Ashby"),))])
+    people = [
+        his(1, "Hugh", "Ashby"),
+        his(2, "Rowan", "Ashby", parents=(ref(1), ref(3), ref(99))),
+        his(3, "Ida", "Quill", sex="female"),
+    ]
+    lines = new_person_lines(review(people, mine))
+    assert "Parent: Hugh Ashby (in Gramps: I-hb)" in lines
+    assert "Parent: Ida Quill (new)" in lines
+    assert not any("recorded" in line or "99" in line for line in lines)
+
+
+def test_a_new_person_lists_the_spouse_and_children_of_a_union():
+    mine = tree([gramps("k", "Mara", "Quill", citations=(crosswalk("Mara Quill"),))])
+    people = [
+        his(2, "Rowan", "Ashby", unions=(his_union(5, 3, children=[4, 98]),)),
+        his(3, "Mara", "Quill", sex="female"),
+        his(4, "Wren", "Ashby"),
+    ]
+    lines = new_person_lines(review(people, mine))
+    assert "Spouse: Mara Quill (in Gramps: I-k)" in lines
+    assert "Children: Wren Ashby (new)" in lines
+
+
+def test_notes_and_photos_of_a_new_person_stay_counts():
+    people = [his(2, "Rowan", "Ashby", notes=(Note("general", "Farmer"),))]
+    assert "1 note recorded" in new_person_lines(review(people, tree([])))
+
+
+def media_row(held):
+    person = his(
+        1, "Rowan", "Ashby", media=(Media(1, "Harvest", None, "o", "t", False),)
+    )
+    mine = tree(
+        [
+            gramps(
+                "g1",
+                "Rowan",
+                "Ashby",
+                media=held,
+                citations=(crosswalk("Rowan Ashby"),),
+            )
+        ]
+    )
+    return rows_of(review([person], mine), 1)["Photo or document"]
+
+
+def test_a_photo_row_lists_the_photos_gramps_already_holds():
+    held = (
+        GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),
+        GrampsMedia("m2", "", "scans/letter.png", "image/png"),
+    )
+    row = media_row(held)
+    assert row["mine"] == ["Already in Gramps: Wedding portrait, letter.png"]
+    assert row["his"] == ["Harvest"]
+
+
+def test_a_photo_row_says_when_gramps_holds_none():
+    assert media_row(())["mine"] == ["No photos in Gramps."]
+
+
+ADDRESS = Address("ashby", "rowan", 0)
+
+
+def link_view(gramps_url, address=ADDRESS):
+    mine = tree([gramps("h1", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),))])
+    rev = review(
+        [his(1, "Rowan", "Ashby", address=address)], mine, gramps_url=gramps_url
+    )
+    return people_view(rev, {})[0]
+
+
+def test_person_links_point_at_both_trees():
+    person = link_view("http://gramps.test/")
+    assert person["his_url"].endswith("/example_w?n=ashby&p=rowan&oc=0")
+    assert person["mine"]["url"] == "http://gramps.test/person/I-h1"
+
+
+def test_links_are_omitted_without_an_address_or_gramps_url():
+    person = link_view("", address=None)
+    assert person["his_url"] is None
+    assert person["mine"]["url"] is None
+
+
+def test_candidates_link_to_their_gramps_pages():
+    candidates = people_view(twin_review(), {})[0]["candidates"]
+    assert {c["mine_url"] for c in candidates} == {
+        "http://gramps.test/person/I-pa",
+        "http://gramps.test/person/I-pb",
+    }

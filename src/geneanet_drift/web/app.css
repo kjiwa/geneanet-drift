@@ -205,6 +205,23 @@ mark {
   padding: 0;
 }
 
+.links,
+.candidates .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.candidates .actions {
+  margin: 0;
+}
+
+.links .button,
+.candidates .button {
+  text-decoration: none;
+}
+
 .candidates li {
   display: flex;
   flex-wrap: wrap;
@@ -281,4 +298,8 @@ dialog .field input[type="checkbox"] {
 
 .search {
   margin-block: var(--space-4);
+}
+
+.links:empty {
+  display: none;
 }

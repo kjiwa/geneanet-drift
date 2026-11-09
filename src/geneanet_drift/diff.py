@@ -2,12 +2,14 @@ import hashlib
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from geneanet_drift.capture import Event, Person, Ref, Union
 from geneanet_drift.gramps import (
     GrampsEvent,
     GrampsFamily,
     GrampsFullPerson,
+    GrampsMedia,
     GrampsTree,
 )
 from geneanet_drift.match import normalise
@@ -199,7 +201,14 @@ def _gender_changes(person: Person, mine: GrampsFullPerson):
     )
 
 
+def _is_known_name(person: Person, mine: GrampsFullPerson) -> bool:
+    known = {normalise(n) for n in (*mine.other_names, f"{mine.given} {mine.surname}")}
+    return normalise(f"{person.given} {person.surname}") in known
+
+
 def _name_changes(person: Person, mine: GrampsFullPerson):
+    if _is_known_name(person, mine):
+        return
     yield from _scalar_changes(person.key, "given", person.given, mine.given)
     yield from _scalar_changes(person.key, "surname", person.surname, mine.surname)
 
@@ -231,7 +240,12 @@ def _note_changes(person: Person, mine: GrampsFullPerson):
             )
 
 
+def _media_title(media: GrampsMedia) -> str:
+    return media.description or PurePosixPath(media.path).name
+
+
 def _media_changes(person: Person, mine: GrampsFullPerson):
+    existing = {"existing": [_media_title(m) for m in mine.media]}
     known = {normalise(m.description) for m in mine.media}
     for media in person.media:
         if not media.title or normalise(media.title) not in known:
@@ -241,7 +255,7 @@ def _media_changes(person: Person, mine: GrampsFullPerson):
                 "date": media.date,
                 "original": media.original,
             }
-            yield _change(person.key, "media", NEW_VALUE, value, None, value)
+            yield _change(person.key, "media", NEW_VALUE, value, existing, value)
 
 
 def _source_changes(person: Person, mine: GrampsFullPerson):
