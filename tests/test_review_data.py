@@ -1,3 +1,4 @@
+from geneanet_drift.capture import Note
 from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
 from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
@@ -262,3 +263,38 @@ def test_choosing_among_three_candidates_keeps_the_list_at_three():
     assert after.candidates == before
     rows = link_changes(rev, {chosen.id: Decision(ACCEPTED)})
     assert len([c for c in rows if c.person == 1]) == 3
+
+
+def new_person_lines(rev, key=2):
+    person = next(p for p in people_view(rev, {}) if p["key"] == key)
+    return next(r["his"] for r in person["changes"] if r["label"] == "New person")
+
+
+def test_a_new_person_lists_linked_and_new_parents_with_their_match_state():
+    mine = tree([gramps("hb", "Hugh", "Ashby", citations=(crosswalk("Hugh Ashby"),))])
+    people = [
+        his(1, "Hugh", "Ashby"),
+        his(2, "Rowan", "Ashby", parents=(ref(1), ref(3), ref(99))),
+        his(3, "Ida", "Quill", sex="female"),
+    ]
+    lines = new_person_lines(review(people, mine))
+    assert "Parent: Hugh Ashby (in Gramps: I-hb)" in lines
+    assert "Parent: Ida Quill (new)" in lines
+    assert not any("recorded" in line or "99" in line for line in lines)
+
+
+def test_a_new_person_lists_the_spouse_and_children_of_a_union():
+    mine = tree([gramps("k", "Mara", "Quill", citations=(crosswalk("Mara Quill"),))])
+    people = [
+        his(2, "Rowan", "Ashby", unions=(his_union(5, 3, children=[4, 98]),)),
+        his(3, "Mara", "Quill", sex="female"),
+        his(4, "Wren", "Ashby"),
+    ]
+    lines = new_person_lines(review(people, mine))
+    assert "Spouse: Mara Quill (in Gramps: I-k)" in lines
+    assert "Children: Wren Ashby (new)" in lines
+
+
+def test_notes_and_photos_of_a_new_person_stay_counts():
+    people = [his(2, "Rowan", "Ashby", notes=(Note("general", "Farmer"),))]
+    assert "1 note recorded" in new_person_lines(review(people, tree([])))

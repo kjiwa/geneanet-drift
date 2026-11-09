@@ -23,6 +23,7 @@ from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import (
     CANDIDATES,
+    LINKED,
     NEW,
     Match,
     display_name,
@@ -201,7 +202,39 @@ def value_lines(value) -> list[str]:
     return []
 
 
-def person_lines(person: Person) -> list[str]:
+def _relative_text(review: Review, key: int, matches: dict[int, Match]) -> str:
+    match = matches[key]
+    if match.kind == LINKED:
+        mine = next(p for p in review.tree.people if p.handle == match.handle)
+        return f"{display_name(review.people[key])} (in Gramps: {mine.gramps_id})"
+    return _marked(display_name(review.people[key]), key, matches)
+
+
+def _relative_texts(review: Review, refs, matches: dict[int, Match]) -> list[str]:
+    return [
+        _relative_text(review, r.key, matches) for r in refs if r.key in review.people
+    ]
+
+
+def _relation_lines(
+    review: Review, person: Person, matches: dict[int, Match]
+) -> list[str]:
+    lines = [
+        f"Parent: {text}" for text in _relative_texts(review, person.parents, matches)
+    ]
+    for union in person.unions:
+        lines += [
+            f"Spouse: {text}"
+            for text in _relative_texts(review, [union.spouse], matches)
+        ]
+        if children := _relative_texts(review, union.children, matches):
+            lines.append(f"Children: {', '.join(children)}")
+    return lines
+
+
+def person_lines(
+    review: Review, person: Person, matches: dict[int, Match]
+) -> list[str]:
     lines = [display_name(person), f"Gender: {person.sex}"]
     if person.occupation:
         lines.append(f"Occupation: {person.occupation}")
@@ -209,9 +242,8 @@ def person_lines(person: Person) -> list[str]:
         parts = (event.date and event.date.text, event.place)
         if text := ", ".join(p for p in parts if p):
             lines.append(f"{event.kind.capitalize()}: {text}")
+    lines += _relation_lines(review, person, matches)
     for count, noun in (
-        (len(person.parents), "parent"),
-        (len(person.unions), "union"),
         (len(person.notes), "note"),
         (len(person.media), "photo or document"),
     ):
@@ -317,15 +349,12 @@ def _marked_his(review: Review, change: Change, matches: dict[int, Match]):
     return _marked_union(review, change, matches)
 
 
-def _his_lines(
-    review: Review, change: Change, matches: dict[int, Match] | None = None
-) -> list[str]:
+def _his_lines(review: Review, change: Change, matches: dict[int, Match]) -> list[str]:
     if change.kind == NEW_PERSON:
-        return person_lines(review.people[change.person])
+        return person_lines(review, review.people[change.person], matches)
     if is_link(change):
         return value_lines(change.mine)
-    his = change.his if matches is None else _marked_his(review, change, matches)
-    return value_lines(his)
+    return value_lines(_marked_his(review, change, matches))
 
 
 def _waiting_name(review: Review, change: Change) -> str | None:
@@ -437,14 +466,20 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
     return result
 
 
-def accepted_changes(
-    review: Review, decisions: dict[str, Decision]
+def _accepted(
+    changes: list[Change], decisions: dict[str, Decision]
 ) -> list[tuple[Change, Decision]]:
     return [
         (c, decisions[c.id])
-        for c in derive(review, decisions).changes
+        for c in changes
         if c.id in decisions and decisions[c.id].status in (ACCEPTED, EDITED)
     ]
+
+
+def accepted_changes(
+    review: Review, decisions: dict[str, Decision]
+) -> list[tuple[Change, Decision]]:
+    return _accepted(derive(review, decisions).changes, decisions)
 
 
 def _verb(change: Change) -> str:
@@ -457,7 +492,8 @@ def _verb(change: Change) -> str:
 
 def preview_view(review: Review, decisions: dict[str, Decision]) -> dict:
     items = []
-    for change, decision in accepted_changes(review, decisions):
+    derived = derive(review, decisions)
+    for change, decision in _accepted(derived.changes, decisions):
         edited = decision.status == EDITED
         items.append(
             {
@@ -466,7 +502,7 @@ def preview_view(review: Review, decisions: dict[str, Decision]) -> dict:
                 "label": field_label(change.field),
                 "lines": edit_lines(editable_kind(change), decision.value)
                 if edited
-                else _his_lines(review, change),
+                else _his_lines(review, change, derived.matches),
                 "edited": edited,
                 "sensitive": change.sensitive,
             }
