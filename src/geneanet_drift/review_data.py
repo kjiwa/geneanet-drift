@@ -189,6 +189,12 @@ def _union_lines(union: dict) -> list[str]:
     return lines
 
 
+def _existing_media_lines(titles: list[str]) -> list[str]:
+    if not titles:
+        return ["No photos in Gramps."]
+    return [f"Already in Gramps: {', '.join(titles)}"]
+
+
 def value_lines(value) -> list[str]:
     if value is None:
         return []
@@ -202,6 +208,8 @@ def value_lines(value) -> list[str]:
         return [f"{value['kind']}: {value['text']}"]
     if "fact" in value:
         return [f"{value['fact']}: {value['text']}"]
+    if "existing" in value:
+        return _existing_media_lines(value["existing"])
     if "title" in value:
         return [p for p in (value["title"] or "Untitled", value["date"]) if p]
     return []

@@ -1,5 +1,6 @@
-from geneanet_drift.capture import Address, Note
+from geneanet_drift.capture import Address, Media, Note
 from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
+from geneanet_drift.gramps import GrampsMedia
 from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
     Review,
@@ -306,6 +307,38 @@ def test_a_new_person_lists_the_spouse_and_children_of_a_union():
 def test_notes_and_photos_of_a_new_person_stay_counts():
     people = [his(2, "Rowan", "Ashby", notes=(Note("general", "Farmer"),))]
     assert "1 note recorded" in new_person_lines(review(people, tree([])))
+
+
+def media_row(held):
+    person = his(
+        1, "Rowan", "Ashby", media=(Media(1, "Harvest", None, "o", "t", False),)
+    )
+    mine = tree(
+        [
+            gramps(
+                "g1",
+                "Rowan",
+                "Ashby",
+                media=held,
+                citations=(crosswalk("Rowan Ashby"),),
+            )
+        ]
+    )
+    return rows_of(review([person], mine), 1)["Photo or document"]
+
+
+def test_a_photo_row_lists_the_photos_gramps_already_holds():
+    held = (
+        GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),
+        GrampsMedia("m2", "", "scans/letter.png", "image/png"),
+    )
+    row = media_row(held)
+    assert row["mine"] == ["Already in Gramps: Wedding portrait, letter.png"]
+    assert row["his"] == ["Harvest"]
+
+
+def test_a_photo_row_says_when_gramps_holds_none():
+    assert media_row(())["mine"] == ["No photos in Gramps."]
 
 
 ADDRESS = Address("ashby", "rowan", 0)

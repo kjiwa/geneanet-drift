@@ -494,3 +494,21 @@ def test_id_survives_an_edit_to_my_side_but_not_to_his():
     assert before.id == after.id
     renamed = {**people, 1: his(1, "Rowann", "Ashby", public_name="Rowan Ashby")}
     assert only(run(renamed, gramps_tree), "given").id != before.id
+
+
+def test_a_media_change_carries_the_titles_of_the_photos_gramps_holds():
+    person = his(
+        1, "Rowan", "Ashby", media=(Media(1, "Harvest", None, "o", "t", False),)
+    )
+    held = (
+        GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),
+        GrampsMedia("m2", "", "scans/letter.png", "image/png"),
+    )
+    change = only(diff_one(person, gramps("g1", "Rowan", "Ashby", media=held)), "media")
+    assert change.mine == {"existing": ["Wedding portrait", "letter.png"]}
+    assert (
+        change.id == only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").id
+    )
+    assert only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").mine == {
+        "existing": []
+    }
