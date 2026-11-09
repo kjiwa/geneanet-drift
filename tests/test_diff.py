@@ -512,3 +512,38 @@ def test_a_media_change_carries_the_titles_of_the_photos_gramps_holds():
     assert only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").mine == {
         "existing": []
     }
+
+
+def test_date_values_add_end_and_text_only_when_present():
+    from geneanet_drift.diff import _date_value
+    from geneanet_drift.gramps import GrampsDate
+
+    plain = _date_value(GrampsDate(1900, 2, 3, None, None, ""))
+    assert set(plain) == {"year", "month", "day", "modifier", "quality"}
+    assert _date_value(his_date(1900, 2, 3)) == plain
+    span = _date_value(GrampsDate(1900, None, None, "range", None, "", 1910, 5, 4))
+    assert (span["end_year"], span["end_month"], span["end_day"]) == (1910, 5, 4)
+    assert "text" not in span
+    text = _date_value(GrampsDate(None, None, None, "text", None, "around the war"))
+    assert text["text"] == "around the war"
+    assert "end_year" not in text
+
+
+def test_change_ids_for_his_dates_are_unchanged():
+    person = his(1, "Rowan", "Ashby", events=(his_event("born", 1950, "Lakeside"),))
+    mine = gramps("g1", "Rowan", "Ashby")
+    change = only(diff_one(person, mine), "event:born")
+    assert change.id == change_id(
+        1,
+        "event:born",
+        {
+            "date": {
+                "year": 1950,
+                "month": None,
+                "day": None,
+                "modifier": None,
+                "quality": None,
+            },
+            "place": "Lakeside",
+        },
+    )

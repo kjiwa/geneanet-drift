@@ -1,3 +1,5 @@
+import pytest
+
 from geneanet_drift.capture import Address, Media, Note
 from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
 from geneanet_drift.gramps import GrampsMedia
@@ -5,6 +7,7 @@ from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
     Review,
     accepted_changes,
+    date_text,
     derive,
     field_changes,
     link_changes,
@@ -370,3 +373,47 @@ def test_candidates_link_to_their_gramps_pages():
         "http://gramps.test/person/I-pa",
         "http://gramps.test/person/I-pb",
     }
+
+
+def _d(**parts):
+    return {
+        "year": None,
+        "month": None,
+        "day": None,
+        "modifier": None,
+        "quality": None,
+        **parts,
+    }
+
+
+@pytest.mark.parametrize(
+    "date, expected",
+    [
+        (_d(year=1923, modifier="range", end_year=1928), "between 1923 and 1928"),
+        (
+            _d(
+                year=1923,
+                month=2,
+                modifier="range",
+                end_year=1928,
+                end_month=5,
+                end_day=4,
+            ),
+            "between February 1923 and May 4, 1928",
+        ),
+        (_d(year=1923, modifier="span", end_year=1928), "from 1923 to 1928"),
+        (_d(year=1923, modifier="before"), "before 1923"),
+        (_d(year=1923, modifier="after"), "after 1923"),
+        (_d(year=1923, modifier="about"), "about 1923"),
+        (_d(year=1923, quality="estimated"), "estimated 1923"),
+        (
+            _d(year=1923, modifier="about", quality="calculated"),
+            "calculated about 1923",
+        ),
+        (_d(modifier="text", text="around the war"), "around the war"),
+        (_d(year=1923, month=2, day=3), "February 3, 1923"),
+        (None, ""),
+    ],
+)
+def test_date_text_renders_each_date_shape(date, expected):
+    assert date_text(date) == expected

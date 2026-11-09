@@ -97,5 +97,5 @@ def family(handle: str, father=None, mother=None, children=(), events=()):
     )
 
 
-def tree(people, families=()) -> GrampsTree:
-    return GrampsTree(tuple(people), tuple(families))
+def tree(people, families=(), places=()) -> GrampsTree:
+    return GrampsTree(tuple(people), tuple(families), tuple(places))

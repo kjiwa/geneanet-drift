@@ -85,13 +85,22 @@ def _squash(text: str) -> str:
 def _date_value(date) -> dict | None:
     if date is None:
         return None
-    return {
+    value = {
         "year": date.year,
         "month": date.month,
         "day": date.day,
         "modifier": date.modifier,
         "quality": date.quality,
     }
+    if getattr(date, "end_year", None):
+        value |= {
+            "end_year": date.end_year,
+            "end_month": date.end_month,
+            "end_day": date.end_day,
+        }
+    if date.modifier == "text":
+        value["text"] = date.text
+    return value
 
 
 def _fact(date, place: str | None) -> dict:

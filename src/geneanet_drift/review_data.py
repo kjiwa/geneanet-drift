@@ -162,18 +162,36 @@ def field_label(field: str) -> str:
     return FIELD_LABELS.get(field) or FIELD_LABELS[field.split(":")[0]]
 
 
+def _day_text(year, month, day) -> str:
+    name = MONTHS[month - 1] if month else None
+    if name and day:
+        return f"{name} {day}, {year}"
+    return f"{name} {year}" if name else str(year)
+
+
+def _core_text(date: dict) -> str:
+    start = _day_text(date["year"], date.get("month"), date.get("day"))
+    if not date.get("end_year"):
+        return start
+    end = _day_text(date["end_year"], date.get("end_month"), date.get("end_day"))
+    if date.get("modifier") == "span":
+        return f"from {start} to {end}"
+    return f"between {start} and {end}"
+
+
 def date_text(date: dict | None) -> str:
-    if not date or date.get("year") is None:
+    if not date:
         return ""
-    year = date["year"]
-    month = MONTHS[date["month"] - 1] if date.get("month") else None
-    if month and date.get("day"):
-        core = f"{month} {date['day']}, {year}"
-    elif month:
-        core = f"{month} {year}"
-    else:
-        core = str(year)
-    return " ".join(p for p in (date.get("modifier"), core) if p)
+    if date.get("modifier") == "text":
+        return date.get("text", "")
+    if date.get("year") is None:
+        return ""
+    modifier = date.get("modifier")
+    words = [date.get("quality")]
+    if modifier in ("before", "after", "about"):
+        words.append(modifier)
+    words.append(_core_text(date))
+    return " ".join(w for w in words if w)
 
 
 def _fact_text(fact: dict) -> str:
