@@ -28,6 +28,11 @@ from geneanet_drift.gramps import (
 from geneanet_drift.match_tree import LINKED, Match, display_name
 
 
+def _recorded_before(change: Change):
+    """Media rows carry the person's other photos for review; they are not the prior value."""
+    return None if change.field == "media" else change.mine
+
+
 def source_title(tree: str) -> str:
     return f"Geneanet - {tree} family tree"
 
@@ -204,7 +209,7 @@ class _Planner:
             f"Applied from Geneanet on {self.inputs.today.isoformat()}: "
             f"{change.field} ({change.kind}). "
             f"Geneanet: {json.dumps(change.his, ensure_ascii=False)}. "
-            f"Gramps before: {json.dumps(change.mine, ensure_ascii=False)}."
+            f"Gramps before: {json.dumps(_recorded_before(change), ensure_ascii=False)}."
         )
         return [cite, records.note(why, text, kind)], cite["handle"], why
 
