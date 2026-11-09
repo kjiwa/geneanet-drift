@@ -107,7 +107,9 @@ def _date_differs(his: dict | None, mine: dict | None) -> bool:
 
 
 def _place_differs(his: str | None, mine: str | None) -> bool:
-    return bool(his) and normalise(his) != normalise(mine or "")
+    return bool(his) and not set(normalise(his).split()) <= set(
+        normalise(mine or "").split()
+    )
 
 
 def _is_blank(fact: dict | None) -> bool:

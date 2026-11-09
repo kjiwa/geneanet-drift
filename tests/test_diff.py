@@ -105,6 +105,21 @@ def test_place_difference_keeps_the_agreeing_date():
     assert change.proposed["place"] == "Lakeside"
 
 
+def test_a_place_that_his_side_only_abbreviates_changes_nothing():
+    person = his(
+        1, "Rowan", "Ashby", events=(his_event("born", 1950, "Harbor-Town, Utopia"),)
+    )
+    mine = gramps(
+        "g1",
+        "Rowan",
+        "Ashby",
+        events=(
+            gramps_event("Birth", 1950, "Harbor Town Region, Old Quarter, Utopia"),
+        ),
+    )
+    assert diff_one(person, mine) == []
+
+
 def test_event_with_equal_facts_and_a_blank_his_place_is_unchanged():
     person = his(1, "Rowan", "Ashby", events=(his_event("born", 1950),))
     mine = gramps(
