@@ -26,6 +26,7 @@ from geneanet_drift.review_data import (
     derive,
     editable_kind,
     field_changes,
+    his_place_uses,
     is_link,
     link_changes,
     people_view,
@@ -145,8 +146,7 @@ class App:
 
     def map_place(self, body: dict) -> dict:
         text, handle = body.get("text"), body.get("handle")
-        known = {p["text"] for p in place_view(self.review, {})}
-        if not isinstance(text, str) or text not in known:
+        if not isinstance(text, str) or text not in his_place_uses(self.review):
             raise RequestError(HTTPStatus.BAD_REQUEST, "unknown place text")
         handles = {p.handle for p in self.review.tree.places}
         if handle is not None and not (isinstance(handle, str) and handle in handles):

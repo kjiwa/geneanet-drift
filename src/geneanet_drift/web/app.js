@@ -439,7 +439,9 @@ function routePlaces() {
 async function loadPlaces() {
   try {
     state.places = (await api("/api/places")).places;
+    state.placesFailed = false;
   } catch (error) {
+    state.placesFailed = true;
     flash(error.message);
   }
   render({ moveFocus: true });
@@ -459,6 +461,15 @@ function render({ keepFocus = null, moveFocus = false } = {}) {
   if (!state.data) {
     view.replaceChildren(routePerson() === null ? skeletonList() : skeletonPerson());
     view.setAttribute("aria-busy", "true");
+    return;
+  }
+  if (routePlaces() && state.places === null && state.placesFailed) {
+    view.replaceChildren(h("div", {},
+      h("a", { class: "back", href: "#/", text: "Back to all people" }),
+      h("h1", { tabindex: "-1", text: "Places" }),
+      h("p", { class: "status", role: "status", text: "The places could not be loaded." }),
+      h("button", { class: "button", type: "button", text: "Try again", onclick: loadPlaces })));
+    view.removeAttribute("aria-busy");
     return;
   }
   if (routePlaces() && state.places === null) {

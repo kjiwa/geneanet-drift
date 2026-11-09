@@ -603,7 +603,7 @@ def summary_view(people: list[dict], accepted: int) -> dict:
 PLACE_SUGGESTIONS = 3
 
 
-def _his_place_uses(review: Review) -> Counter[str]:
+def his_place_uses(review: Review) -> Counter[str]:
     return Counter(
         place
         for person in review.people.values()
@@ -642,5 +642,5 @@ def place_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
             "mapping": _place_mapping_view(titles, decisions.get(PLACE_PREFIX + text)),
             "suggestions": _place_suggestions(review, text),
         }
-        for text, uses in sorted(_his_place_uses(review).items())
+        for text, uses in sorted(his_place_uses(review).items())
     ]
