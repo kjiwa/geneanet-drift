@@ -310,3 +310,71 @@ def test_a_chosen_pair_beats_a_crosswalk_for_the_same_handle():
     result = chosen_match(people, gramps_tree, {2: "g1"})
     assert (result[2].kind, result[2].handle) == (LINKED, "g1")
     assert result[1].kind != LINKED
+
+
+def father_by_child():
+    return tree(
+        [
+            gramps("pa", "Edmund", "Vance"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+        ],
+        [family("fa", father="pa", children=["ka"])],
+    )
+
+
+def linked_child_people():
+    return [
+        his(1, "Hugh", "Ashby", unions=(his_union(1, 9, children=[2]),)),
+        his(2, "Rowan", "Ashby", parents=(ref(1),)),
+        his(9, "Mara", "Quill"),
+    ]
+
+
+def test_a_relative_of_a_matched_person_is_a_candidate_without_a_name():
+    result = chosen_match(linked_child_people(), father_by_child(), {2: "ka"})
+    assert result[1].kind == CANDIDATES
+    assert result[1].candidates == ("pa",)
+    assert result[1].why == "relative of a matched person"
+
+
+def test_a_relative_candidate_joins_the_name_candidates():
+    gramps_tree = tree(
+        [
+            gramps("pa", "Edmund", "Vance"),
+            gramps("pb", "Hugh", "Ashby"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+        ],
+        [family("fa", father="pa", children=["ka"])],
+    )
+    result = chosen_match(linked_child_people(), gramps_tree, {2: "ka"})
+    assert set(result[1].candidates) == {"pa", "pb"}
+    assert result[1].why == "name match only; relative of a matched person"
+
+
+def test_a_taken_handle_is_not_a_relative_candidate():
+    people = linked_child_people() + [his(3, "Edmund", "Vance")]
+    result = chosen_match(people, father_by_child(), {2: "ka", 3: "pa"})
+    assert result[1].kind == NEW
+
+
+def test_a_negative_pair_is_not_a_relative_candidate():
+    result = match_people(
+        his_people(*linked_child_people()),
+        father_by_child(),
+        SOURCE,
+        {("hugh ashby", "I-pa")},
+        {2: "ka"},
+    )
+    assert result[1].kind == NEW
+
+
+def test_a_relative_candidate_must_have_a_compatible_sex():
+    gramps_tree = tree(
+        [
+            gramps("pa", "Edmund", "Vance", gender="female"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+        ],
+        [family("fa", father="pa", children=["ka"])],
+    )
+    result = chosen_match(linked_child_people(), gramps_tree, {2: "ka"})
+    assert result[1].kind == NEW
