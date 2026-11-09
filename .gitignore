@@ -10,3 +10,4 @@ __pycache__/
 /negatives.json
 /decisions.json
 /applied.json
+/build/
