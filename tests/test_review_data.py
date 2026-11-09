@@ -185,3 +185,43 @@ def test_relatives_that_will_be_created_are_marked_new_in_parent_and_union_rows(
         "Children: Wren Ashby (new)",
     ]
     assert rows["Parent"]["informational"] is False
+
+
+def relative_review():
+    mine = tree(
+        [
+            gramps(
+                "rb",
+                "Rowan",
+                "Ashby",
+                families=("fr",),
+                citations=(crosswalk("Rowan Ashby"),),
+            ),
+            gramps("jk", "Jory", "Pell", parent_families=("fr",)),
+        ],
+        [family("fr", father="rb", children=["jk"])],
+    )
+    people = [
+        his(1, "Rowan", "Ashby", unions=(his_union(1, 9, children=[2]),)),
+        his(2, "Wren", "Vale", parents=(ref(1),)),
+        his(9, "Mara", "Quill"),
+    ]
+    return review(people, mine)
+
+
+def test_a_person_chosen_through_a_relative_keeps_the_choice_as_a_candidate():
+    rev = relative_review()
+    offered = link_to(rev, 2, "I-jk")
+    decisions = {offered.id: Decision(ACCEPTED)}
+    match = derive(rev, decisions).matches[2]
+    assert (match.kind, match.handle, match.candidates) == (LINKED, "jk", ("jk",))
+    assert link_to(rev, 2, "I-jk", decisions).id == offered.id
+    assert people_view(rev, decisions)[1]["mine"]["id"] == "I-jk"
+
+
+def test_conflicting_accepted_links_for_one_person_settle_on_the_first():
+    rev = twin_review()
+    first, second = (c for c in link_changes(rev, {}) if c.person == 1)
+    decisions = {first.id: Decision(ACCEPTED), second.id: Decision(ACCEPTED)}
+    matches = derive(rev, decisions).matches
+    assert matches[1].handle == first.proposed["handle"]

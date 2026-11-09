@@ -53,6 +53,7 @@ FIELD_LABELS = {
 }
 PHOTO_TYPES = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 MAX_TEXT = 2000
+MARKERS = {CANDIDATES: " (no match yet)", NEW: " (new)"}
 
 
 @dataclass(frozen=True)
@@ -86,30 +87,34 @@ def is_link(change: Change) -> bool:
 
 
 def _accepted_links(changes: list[Change], decisions) -> dict[int, str]:
-    return {
-        c.person: c.proposed["handle"]
-        for c in changes
-        if is_link(c) and decisions.get(c.id) == Decision(ACCEPTED)
-    }
+    """The first accepted link of each person, in change order."""
+    found: dict[int, str] = {}
+    for c in changes:
+        if is_link(c) and decisions.get(c.id) == Decision(ACCEPTED):
+            found.setdefault(c.person, c.proposed["handle"])
+    return found
 
 
 def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
     """Match and diff again with every accepted link chosen and rejected one negative.
 
-    Choices and negatives only accumulate, so the loop ends once a pass adds none.
+    A person's first choice stands and negatives only grow, so every pass but the
+    last adds a choice or a negative; the cap turns a broken invariant into an error.
     """
     chosen: dict[int, str] = {}
     negatives = set(review.negatives)
-    while True:
+    passes = len(review.people) * (len(review.tree.people) + 1) + 2
+    for _ in range(passes):
         matches = match_people(
             review.people, review.tree, review.source, negatives, chosen
         )
         changes = diff_people(review.people, review.tree, matches)
-        found = {**chosen, **_accepted_links(changes, decisions)}
+        found = {**_accepted_links(changes, decisions), **chosen}
         rejected = negatives | link_negatives(changes, decisions)
         if found == chosen and rejected == negatives:
             return Derived(matches, changes)
         chosen, negatives = found, rejected
+    raise RuntimeError(f"review matching did not settle in {passes} passes")
 
 
 def link_changes(review: Review, decisions: dict[str, Decision]) -> list[Change]:
@@ -258,9 +263,6 @@ def _proposed_lines(change: Change) -> list[str] | None:
     if change.kind != DIFFERS or refs or change.proposed == change.his:
         return None
     return value_lines(change.proposed)
-
-
-MARKERS = {CANDIDATES: " (no match yet)", NEW: " (new)"}
 
 
 def _marked(name: str, key: int, matches: dict[int, Match]) -> str:

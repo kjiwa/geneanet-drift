@@ -88,6 +88,10 @@ class App:
                 raise RequestError(
                     HTTPStatus.BAD_REQUEST, "choose a match through the link action"
                 )
+            if change_id in {c.id for c in changes if c.waiting_on is not None}:
+                raise RequestError(
+                    HTTPStatus.BAD_REQUEST, "match the person it waits on first"
+                )
             save_decisions(
                 self.decisions_path,
                 self._apply(

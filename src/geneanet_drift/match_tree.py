@@ -1,5 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
+from functools import cached_property
 
 from geneanet_drift.capture import Person
 from geneanet_drift.feed import name_key
@@ -262,6 +263,10 @@ class _Kin:
     negatives: set[tuple[str, str]]
     taken: set[str]
 
+    @cached_property
+    def people(self) -> dict[str, GrampsFullPerson]:
+        return {p.handle: p for p in self.tree.people}
+
 
 def _compatible(his_sex: str, gramps_gender: str) -> bool:
     return "unknown" in (his_sex, gramps_gender) or his_sex == gramps_gender
@@ -269,7 +274,7 @@ def _compatible(his_sex: str, gramps_gender: str) -> bool:
 
 def _relative_candidates(person: Person, his: Relatives, matched, kin) -> list[str]:
     """Gramps relatives, in the mirrored role, of each matched relative."""
-    people = {p.handle: p for p in kin.tree.people}
+    people = kin.people
     found = {}
     for role, mirrored in MIRRORED_ROLES.items():
         for key in getattr(his, role):
@@ -286,11 +291,21 @@ def _relative_candidates(person: Person, his: Relatives, matched, kin) -> list[s
     ]
 
 
+def _kept(person, handle, why, pool, his, matched, kin) -> tuple[str, ...]:
+    """A chosen person keeps every offered handle, and the chosen one, to change it."""
+    if why != CHOSEN_WHY:
+        return ()
+    offered = [v.person.handle for v in pool]
+    offered += _relative_candidates(person, his, matched, kin)
+    return tuple(dict.fromkeys([*offered, handle]))
+
+
 def _final(person, matched, pool, his, kin) -> Match:
     if person.key in matched:
         handle, why = matched[person.key]
-        chosen = pool if why == CHOSEN_WHY else ()
-        return Match(LINKED, handle, tuple(v.person.handle for v in chosen), why=why)
+        return Match(
+            LINKED, handle, _kept(person, handle, why, pool, his, matched, kin), why=why
+        )
     found = _unmatched(pool, _resolved(his, matched), kin.relatives, kin.taken)
     return _with_relatives(found, _relative_candidates(person, his, matched, kin))
 
