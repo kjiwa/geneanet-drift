@@ -292,6 +292,11 @@ function rowActions(row) {
     button("reject", "Reject", status === "rejected", () => decide(row, "rejected")));
 }
 
+function waitingNote(row) {
+  return h("p", { class: "muted" }, "Choose a match for \"",
+    h("a", { href: `#/person/${row.waiting_on}`, text: row.waiting_name }), "\" first.");
+}
+
 function changeRow(row) {
   const both = row.his.length > 0 && row.mine.length > 0;
   const hisEmpty = row.informational ? "Not in his tree." : "Nothing recorded.";
@@ -305,7 +310,8 @@ function changeRow(row) {
       h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Mine (Gramps)" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
     row.proposed ? h("p", { class: "muted", text: `Gramps would hold: ${row.proposed.join("; ")}` }) : null,
     row.edit_lines ? h("p", { text: `Your edit: ${row.edit_lines.join("; ")}` }) : null,
-    row.informational ? h("p", { class: "muted", text: "Shown for information. This is never changed in Gramps." }) : null,
+    row.waiting_on === null ? null : waitingNote(row),
+    row.informational && row.waiting_on === null ? h("p", { class: "muted", text: "Shown for information. This is never changed in Gramps." }) : null,
     row.informational ? null : rowActions(row),
     state.editing.has(row.id) ? editForm(row) : null);
 }

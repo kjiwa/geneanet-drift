@@ -22,9 +22,10 @@ from geneanet_drift.decisions import (
 from geneanet_drift.review_data import (
     PHOTO_TYPES,
     Review,
+    derive,
     editable_kind,
     field_changes,
-    known_ids,
+    is_link,
     link_changes,
     people_view,
     preview_view,
@@ -78,13 +79,18 @@ class App:
         with self.lock:
             decisions = self.decisions()
             change_id = body.get("id")
-            if not isinstance(change_id, str) or change_id not in known_ids(
-                self.review, decisions
-            ):
+            changes = derive(self.review, decisions).changes
+            if not isinstance(change_id, str) or change_id not in {
+                c.id for c in changes
+            }:
                 raise RequestError(HTTPStatus.NOT_FOUND, "unknown change")
-            if change_id in {c.id for c in link_changes(self.review)}:
+            if change_id in {c.id for c in changes if is_link(c)}:
                 raise RequestError(
                     HTTPStatus.BAD_REQUEST, "choose a match through the link action"
+                )
+            if change_id in {c.id for c in changes if c.waiting_on is not None}:
+                raise RequestError(
+                    HTTPStatus.BAD_REQUEST, "match the person it waits on first"
                 )
             save_decisions(
                 self.decisions_path,
@@ -115,10 +121,13 @@ class App:
     def link(self, body: dict) -> dict:
         person, chosen = body.get("person"), body.get("change")
         with self.lock:
-            siblings = [c.id for c in link_changes(self.review) if c.person == person]
+            decisions = self.decisions()
+            siblings = [
+                c.id for c in link_changes(self.review, decisions) if c.person == person
+            ]
             if not siblings or (chosen is not None and chosen not in siblings):
                 raise RequestError(HTTPStatus.NOT_FOUND, "unknown match")
-            decisions = {k: d for k, d in self.decisions().items() if k not in siblings}
+            decisions = {k: d for k, d in decisions.items() if k not in siblings}
             if chosen is not None:
                 decisions[chosen] = Decision(ACCEPTED)
             save_decisions(self.decisions_path, decisions)

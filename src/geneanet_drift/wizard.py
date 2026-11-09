@@ -27,7 +27,6 @@ from geneanet_drift.config import (
     load_config,
 )
 from geneanet_drift.decisions import load_decisions
-from geneanet_drift.diff import diff_people
 from geneanet_drift.feed import Entry, FeedError, since
 from geneanet_drift.gramps import (
     GrampsClient,
@@ -37,8 +36,7 @@ from geneanet_drift.gramps import (
     take_tree,
 )
 from geneanet_drift.match import load_negatives
-from geneanet_drift.match_tree import match_people
-from geneanet_drift.review_data import load_review
+from geneanet_drift.review_data import Review, derive, load_review
 from geneanet_drift.server import serve
 from geneanet_drift.status import (
     Visit,
@@ -178,19 +176,21 @@ def apply_decisions(
     tree = take_tree(reader)
     people = load_tree(pages, cfg.tree)
     negatives = load_negatives(cfg.negatives_path)
-    matches = match_people(people, tree, source_title(cfg.tree), negatives)
+    decisions = load_decisions(cfg.decisions_path)
+    derived = derive(
+        Review(people, tree, source_title(cfg.tree), frozenset(negatives), None),
+        decisions,
+    )
     inputs = Inputs(
         people,
-        matches,
+        derived.matches,
         tree,
         take_references(reader),
         cfg.tree,
         now.date(),
         pages.parent,
     )
-    plan = build_plan(
-        diff_people(people, tree, matches), load_decisions(cfg.decisions_path), inputs
-    )
+    plan = build_plan(derived.changes, decisions, inputs)
     logged = {(e["change"], e["index"]) for e in read_log(cfg.applied_path)}
     say(preview(plan, logged))
     pending = sum((s.change_id, s.index) not in logged for s in plan.steps)

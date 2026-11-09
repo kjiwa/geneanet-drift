@@ -14,10 +14,15 @@ from geneanet_drift.decisions import (
     Decision,
     load_decisions,
 )
-from geneanet_drift.diff import diff_people
-from geneanet_drift.match_tree import match_people
-from geneanet_drift.review_data import Review
-from geneanet_drift.server import TOKEN_HEADER, WEB_DIR, App, make_server, serve
+from geneanet_drift.review_data import Review, derive, people_view
+from geneanet_drift.server import (
+    TOKEN_HEADER,
+    WEB_DIR,
+    App,
+    RequestError,
+    make_server,
+    serve,
+)
 from geneanet_drift.wizard import review_tree
 from tests.builders import (
     SOURCE,
@@ -29,6 +34,7 @@ from tests.builders import (
     his_people,
     tree,
 )
+from tests.test_review_data import relative_review, waiting_review
 
 REPO = Path(__file__).parent.parent
 
@@ -62,8 +68,7 @@ def synthetic_review(media_dir: Path | None) -> Review:
             gramps("h4", "Sage", "Harlow", citations=(crosswalk("Sage Harlow"),)),
         ]
     )
-    matches = match_people(people, mine, SOURCE, set())
-    return Review(people, mine, matches, diff_people(people, mine, matches), media_dir)
+    return Review(people, mine, SOURCE, frozenset(), media_dir)
 
 
 class Client:
@@ -440,3 +445,21 @@ def test_review_command_reports_a_port_that_cannot_be_bound(tmp_path, served):
     cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
     with pytest.raises(ConfigError, match="listen"):
         serve(cfg, synthetic_review(None), server.server_address[1], print)
+
+
+def test_a_choice_offered_through_a_relative_can_be_undone(tmp_path):
+    app = App(relative_review(), tmp_path / "decisions.json")
+    offered = people_view(app.review, {})[1]["candidates"][0]["change"]
+    app.link({"person": 2, "change": offered})
+    assert app.decisions() == {offered: Decision(ACCEPTED)}
+    app.link({"person": 2, "change": None})
+    assert app.decisions() == {}
+
+
+def test_a_change_that_waits_on_another_person_cannot_be_decided(tmp_path):
+    app = App(waiting_review(), tmp_path / "decisions.json")
+    waiting = next(c for c in derive(app.review, {}).changes if c.waiting_on)
+    with pytest.raises(RequestError) as error:
+        app.decide({"id": waiting.id, "status": "accepted"})
+    assert error.value.status == 400
+    assert not app.decisions_path.exists()

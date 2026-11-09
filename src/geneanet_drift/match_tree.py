@@ -1,5 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
+from functools import cached_property
 
 from geneanet_drift.capture import Person
 from geneanet_drift.feed import name_key
@@ -17,6 +18,9 @@ CANDIDATES = "candidates"
 NEW = "new"
 ROLES = ("parents", "spouses", "children")
 CONTRADICTING_ROLES = ("parents", "spouses")
+CHOSEN_WHY = "chosen by you"
+RELATIVE_WHY = "relative of a matched person"
+MIRRORED_ROLES = {"parents": "children", "spouses": "spouses", "children": "parents"}
 
 
 @dataclass(frozen=True)
@@ -134,19 +138,33 @@ def _crosswalk(people, tree, source, negatives) -> dict[int, tuple[str, str]]:
     }
 
 
+def _seed(crosswalk, chosen) -> dict[int, tuple[str, str]]:
+    """Choices first; a crosswalk entry for the same person or handle yields."""
+    seeded: dict[int, tuple[str, str]] = {}
+    for key, handle in sorted(chosen.items()):
+        if handle not in {h for h, _ in seeded.values()}:
+            seeded[key] = (handle, CHOSEN_WHY)
+    taken = {h for h, _ in seeded.values()}
+    return {
+        **{k: v for k, v in crosswalk.items() if k not in seeded and v[0] not in taken},
+        **seeded,
+    }
+
+
 def _pools(people, tree, negatives, matched) -> dict[int, list[Verdict]]:
     gramps = tuple(_gramps_person(p) for p in tree.people)
     ids = {p.handle: p.gramps_id for p in tree.people}
     taken = {handle for handle, _ in matched.values()}
     pools = {}
     for key, person in people.items():
-        if key in matched:
+        if key in matched and matched[key][1] != CHOSEN_WHY:
             continue
+        own = matched[key][0] if key in matched else None
         found = [
             c
             for c in name_candidates(display_name(person), gramps)
             if (name_key(display_name(person)), ids[c.handle]) not in negatives
-            and c.handle not in taken
+            and (c.handle not in taken or c.handle == own)
         ]
         pools[key] = narrow([year_verdict(_item(person), c) for c in found])
     return pools
@@ -221,19 +239,80 @@ def match_people(
     tree: GrampsTree,
     source: str,
     negatives: set[tuple[str, str]],
+    chosen: dict[int, str] | None = None,
 ) -> dict[int, Match]:
-    matched = _crosswalk(people, tree, source, negatives)
+    chosen = {k: h for k, h in (chosen or {}).items() if k in people}
+    matched = _seed(_crosswalk(people, tree, source, negatives), chosen)
     pools = _pools(people, tree, negatives, matched)
     relatives = _gramps_relatives(tree)
     graph = {key: _his_relatives(p) for key, p in people.items()}
     while found := _round(pools, matched, relatives, graph):
         matched.update(found)
     taken = {handle for handle, _ in matched.values()}
-    return {key: _final(key, matched, pools, graph, relatives, taken) for key in people}
+    kin = _Kin(tree, relatives, negatives, taken)
+    return {
+        key: _final(people[key], matched, pools.get(key, ()), graph[key], kin)
+        for key in people
+    }
 
 
-def _final(key, matched, pools, graph, relatives, taken) -> Match:
-    if key in matched:
-        handle, why = matched[key]
-        return Match(LINKED, handle, why=why)
-    return _unmatched(pools[key], _resolved(graph[key], matched), relatives, taken)
+@dataclass(frozen=True)
+class _Kin:
+    tree: GrampsTree
+    relatives: dict[str, Relatives]
+    negatives: set[tuple[str, str]]
+    taken: set[str]
+
+    @cached_property
+    def people(self) -> dict[str, GrampsFullPerson]:
+        return {p.handle: p for p in self.tree.people}
+
+
+def _compatible(his_sex: str, gramps_gender: str) -> bool:
+    return "unknown" in (his_sex, gramps_gender) or his_sex == gramps_gender
+
+
+def _relative_candidates(person: Person, his: Relatives, matched, kin) -> list[str]:
+    """Gramps relatives, in the mirrored role, of each matched relative."""
+    people = kin.people
+    found = {}
+    for role, mirrored in MIRRORED_ROLES.items():
+        for key in getattr(his, role):
+            if key in matched:
+                kept = getattr(kin.relatives[matched[key][0]], mirrored) & people.keys()
+                found.update({h: people[h] for h in sorted(kept)})
+    name = name_key(display_name(person))
+    return [
+        h
+        for h, mine in found.items()
+        if h not in kin.taken
+        and (name, mine.gramps_id) not in kin.negatives
+        and _compatible(person.sex, mine.gender)
+    ]
+
+
+def _kept(person, handle, why, pool, his, matched, kin) -> tuple[str, ...]:
+    """A chosen person keeps every offered handle, and the chosen one, to change it."""
+    if why != CHOSEN_WHY:
+        return ()
+    offered = [v.person.handle for v in pool]
+    offered += _relative_candidates(person, his, matched, kin)
+    return tuple(dict.fromkeys([*offered, handle]))
+
+
+def _final(person, matched, pool, his, kin) -> Match:
+    if person.key in matched:
+        handle, why = matched[person.key]
+        return Match(
+            LINKED, handle, _kept(person, handle, why, pool, his, matched, kin), why=why
+        )
+    found = _unmatched(pool, _resolved(his, matched), kin.relatives, kin.taken)
+    return _with_relatives(found, _relative_candidates(person, his, matched, kin))
+
+
+def _with_relatives(found: Match, extra: list[str]) -> Match:
+    extra = [h for h in extra if h not in found.candidates]
+    if not extra:
+        return found
+    why = f"{found.why}; {RELATIVE_WHY}" if found.kind == CANDIDATES else RELATIVE_WHY
+    return Match(CANDIDATES, candidates=found.candidates + tuple(extra), why=why)

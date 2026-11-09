@@ -240,6 +240,8 @@ class _Planner:
         field = change.field
         if change.kind == MISSING_IN_HIS:
             self.skip(change, "only in Gramps; nothing is deleted")
+        elif change.waiting_on is not None:
+            self.skip(change, "waiting for a match to be chosen")
         elif field == "person":
             self.new_person(change, value)
         elif field.startswith("link:"):
