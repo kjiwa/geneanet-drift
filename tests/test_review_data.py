@@ -1,4 +1,4 @@
-from geneanet_drift.capture import Note
+from geneanet_drift.capture import Address, Note
 from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
 from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
@@ -23,8 +23,16 @@ from tests.builders import (
 )
 
 
-def review(people, gramps_tree, negatives=frozenset()):
-    return Review(his_people(*people), gramps_tree, SOURCE, frozenset(negatives), None)
+def review(people, gramps_tree, negatives=frozenset(), gramps_url="http://gramps.test"):
+    return Review(
+        his_people(*people),
+        gramps_tree,
+        SOURCE,
+        frozenset(negatives),
+        None,
+        "example",
+        gramps_url,
+    )
 
 
 def twin_review():
@@ -298,3 +306,34 @@ def test_a_new_person_lists_the_spouse_and_children_of_a_union():
 def test_notes_and_photos_of_a_new_person_stay_counts():
     people = [his(2, "Rowan", "Ashby", notes=(Note("general", "Farmer"),))]
     assert "1 note recorded" in new_person_lines(review(people, tree([])))
+
+
+ADDRESS = Address("ashby", "rowan", 0)
+
+
+def link_view(gramps_url, address=ADDRESS):
+    mine = tree([gramps("h1", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),))])
+    rev = review(
+        [his(1, "Rowan", "Ashby", address=address)], mine, gramps_url=gramps_url
+    )
+    return people_view(rev, {})[0]
+
+
+def test_person_links_point_at_both_trees():
+    person = link_view("http://gramps.test/")
+    assert person["his_url"].endswith("/example_w?n=ashby&p=rowan&oc=0")
+    assert person["mine"]["url"] == "http://gramps.test/person/I-h1"
+
+
+def test_links_are_omitted_without_an_address_or_gramps_url():
+    person = link_view("", address=None)
+    assert person["his_url"] is None
+    assert person["mine"]["url"] is None
+
+
+def test_candidates_link_to_their_gramps_pages():
+    candidates = people_view(twin_review(), {})[0]["candidates"]
+    assert {c["mine_url"] for c in candidates} == {
+        "http://gramps.test/person/I-pa",
+        "http://gramps.test/person/I-pb",
+    }

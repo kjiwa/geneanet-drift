@@ -5,10 +5,9 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
 from geneanet_drift.capture import (
-    Address,
     CaptureError,
     Date,
     Event,
@@ -19,7 +18,7 @@ from geneanet_drift.capture import (
     load_tree,
 )
 from geneanet_drift.config import ConfigError, load_config
-from geneanet_drift.feed import tree_url
+from geneanet_drift.feed import page_url
 
 MAX_LINE = 255
 GEDCOM_MONTHS = (
@@ -171,15 +170,10 @@ def _note_lines(level: int, note: Note) -> list[str]:
     return _lines(level, "NOTE", text)
 
 
-def _page_url(tree: str, address: Address) -> str:
-    query = {"n": address.surname, "p": address.given, "oc": address.occurrence}
-    return f"{tree_url(tree)}?{urlencode(query)}"
-
-
 def _citation_lines(tree: str, person: Person) -> list[str]:
     lines: list[str] = []
     if person.address:
-        url = _page_url(tree, person.address)
+        url = page_url(tree, person.address)
         lines.extend([_line(1, "SOUR", SOURCE_XREF), *_lines(2, "PAGE", url)])
     for source in person.sources:
         lines.extend(

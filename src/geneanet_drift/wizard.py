@@ -178,7 +178,15 @@ def apply_decisions(
     negatives = load_negatives(cfg.negatives_path)
     decisions = load_decisions(cfg.decisions_path)
     derived = derive(
-        Review(people, tree, source_title(cfg.tree), frozenset(negatives), None),
+        Review(
+            people,
+            tree,
+            source_title(cfg.tree),
+            frozenset(negatives),
+            None,
+            cfg.tree,
+            cfg.gramps_url,
+        ),
         decisions,
     )
     inputs = Inputs(

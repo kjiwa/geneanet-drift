@@ -19,6 +19,7 @@ from geneanet_drift.diff import (
     Change,
     diff_people,
 )
+from geneanet_drift.feed import page_url
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import (
@@ -64,6 +65,8 @@ class Review:
     source: str
     negatives: frozenset[tuple[str, str]]
     media_dir: Path | None
+    tree_name: str
+    gramps_url: str
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,8 @@ def load_review(cfg: Config, pages_dir: Path, snapshot: Path) -> Review:
         source_title(cfg.tree),
         frozenset(load_negatives(cfg.negatives_path)),
         media if media.is_dir() else None,
+        cfg.tree,
+        cfg.gramps_url,
     )
 
 
@@ -408,10 +413,24 @@ def _mine_name(person: GrampsFullPerson) -> str:
     return f"{person.given} {person.surname}".strip()
 
 
+def _mine_url(review: Review, mine: GrampsFullPerson) -> str | None:
+    if not review.gramps_url:
+        return None
+    return f"{review.gramps_url.rstrip('/')}/person/{mine.gramps_id}"
+
+
+def _his_url(review: Review, person: Person) -> str | None:
+    return page_url(review.tree_name, person.address) if person.address else None
+
+
 def _candidate_view(
-    mine: GrampsFullPerson, change: Change, decisions: dict[str, Decision]
+    review: Review,
+    mine: GrampsFullPerson,
+    change: Change,
+    decisions: dict[str, Decision],
 ) -> dict:
     return {
+        "mine_url": _mine_url(review, mine),
         "change": change.id,
         "gramps_id": mine.gramps_id,
         "name": _mine_name(mine),
@@ -452,11 +471,19 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
                 "name": display_name(person),
                 "years": _his_years(person),
                 "state": _state(rows, match.handle is not None, new),
-                "mine": found and {"id": found.gramps_id, "name": _mine_name(found)},
+                "his_url": _his_url(review, person),
+                "mine": found
+                and {
+                    "id": found.gramps_id,
+                    "name": _mine_name(found),
+                    "url": _mine_url(review, found),
+                },
                 "why": match.why,
                 "changes": rows,
                 "candidates": [
-                    _candidate_view(mine_by_handle[c.proposed["handle"]], c, decisions)
+                    _candidate_view(
+                        review, mine_by_handle[c.proposed["handle"]], c, decisions
+                    )
                     for c in links.get(key, [])
                 ],
                 "actionable": len(actionable),

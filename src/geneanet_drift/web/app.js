@@ -316,15 +316,21 @@ function changeRow(row) {
     state.editing.has(row.id) ? editForm(row) : null);
 }
 
+function openLink(url, text) {
+  if (!url) return null;
+  return h("a", { class: "button", href: url, target: "_blank", rel: "noopener noreferrer", text });
+}
+
 function candidateItem(person, candidate) {
   const chosen = candidate.decision && candidate.decision.status === "accepted";
   const label = [candidate.name, `(${candidate.gramps_id})`, candidate.years].filter(Boolean).join(" ");
   return h("li", {}, h("span", { text: label }),
+    h("span", { class: "actions" }, openLink(candidate.mine_url, "Open in Gramps"),
     chosen
       ? h("button", { class: "button", type: "button", "aria-pressed": "true", "data-focus": `${candidate.change}:link`,
           text: "Chosen. Undo", onclick: () => chooseLink(person, null) })
       : h("button", { class: "button", type: "button", "aria-pressed": "false", "data-focus": `${candidate.change}:link`,
-          text: "Use this person", onclick: () => chooseLink(person, candidate.change) }));
+          text: "Use this person", onclick: () => chooseLink(person, candidate.change) })));
 }
 
 function matchSection(person) {
@@ -351,7 +357,9 @@ function personView(person) {
   return h("div", {},
     h("a", { class: "back", href: "#/", text: "Back to all people" }),
     h("h1", { tabindex: "-1", text: person.name }),
-    personSummary(person), matchSection(person),
+    personSummary(person),
+    h("p", { class: "links" }, openLink(person.his_url, "Open in Geneanet"), person.mine && openLink(person.mine.url, "Open in Gramps")),
+    matchSection(person),
     h("h2", { text: `Changes (${rows.filter((r) => !r.informational).length} to review)` }), ...body);
 }
 
