@@ -225,3 +225,40 @@ def test_conflicting_accepted_links_for_one_person_settle_on_the_first():
     decisions = {first.id: Decision(ACCEPTED), second.id: Decision(ACCEPTED)}
     matches = derive(rev, decisions).matches
     assert matches[1].handle == first.proposed["handle"]
+
+
+def three_candidate_review():
+    mine = tree(
+        [
+            gramps("pa", "Hugh", "Ashby"),
+            gramps("pb", "Hugh", "Ashby"),
+            gramps("pc", "Hugh", "Ashby"),
+            gramps("mm", "Ione", "Quill", gender="unknown"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+            gramps("kb", "Rowan", "Ashby", parent_families=("fb",)),
+            gramps("kc", "Rowan", "Ashby", parent_families=("fc",)),
+        ],
+        [
+            family("fa", father="pa", children=["ka"]),
+            family("fb", father="pb", mother="mm", children=["kb"]),
+            family("fc", father="pc", children=["kc"]),
+        ],
+    )
+    people = [
+        his(1, "Hugh", "Ashby", unions=(his_union(1, 9, children=[2]),)),
+        his(2, "Rowan", "Ashby", parents=(ref(1),)),
+        his(9, "Mara", "Quill"),
+    ]
+    return review(people, mine)
+
+
+def test_choosing_among_three_candidates_keeps_the_list_at_three():
+    rev = three_candidate_review()
+    before = derive(rev, {}).matches[1].candidates
+    chosen = link_to(rev, 1, "I-pb")
+    after = derive(rev, {chosen.id: Decision(ACCEPTED)}).matches[1]
+    assert len(before) == 3
+    assert after.handle == "pb"
+    assert after.candidates == before
+    rows = link_changes(rev, {chosen.id: Decision(ACCEPTED)})
+    assert len([c for c in rows if c.person == 1]) == 3

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from geneanet_drift.apply import source_title
@@ -112,9 +112,36 @@ def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
         found = {**_accepted_links(changes, decisions), **chosen}
         rejected = negatives | link_negatives(changes, decisions)
         if found == chosen and rejected == negatives:
-            return Derived(matches, changes)
+            stable = _stable_candidates(review, negatives, chosen, matches)
+            if stable is not matches:
+                changes = diff_people(review.people, review.tree, stable)
+            return Derived(stable, changes)
         chosen, negatives = found, rejected
     raise RuntimeError(f"review matching did not settle in {passes} passes")
+
+
+def _stable_candidates(
+    review: Review,
+    negatives: set[tuple[str, str]],
+    chosen: dict[int, str],
+    matches: dict[int, Match],
+) -> dict[int, Match]:
+    """Offer a chosen person the candidates seen before any choice, plus the choice.
+
+    Relatives matched because of a choice would otherwise add candidates.
+    """
+    if not chosen:
+        return matches
+    baseline = match_people(review.people, review.tree, review.source, negatives)
+    return {
+        key: replace(
+            match,
+            candidates=tuple(dict.fromkeys([*baseline[key].candidates, chosen[key]])),
+        )
+        if key in chosen
+        else match
+        for key, match in matches.items()
+    }
 
 
 def link_changes(review: Review, decisions: dict[str, Decision]) -> list[Change]:
