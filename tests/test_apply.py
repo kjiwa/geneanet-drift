@@ -25,7 +25,7 @@ from geneanet_drift.apply import (
 from geneanet_drift.capture import Media
 from geneanet_drift.config import load_config, write_json
 from geneanet_drift.decisions import ACCEPTED, EDITED, REJECTED, Decision
-from geneanet_drift.diff import diff_people
+from geneanet_drift.diff import DIFFERS, Change, diff_people
 from geneanet_drift.feed import name_key
 from geneanet_drift.gedcom import media_path
 from geneanet_drift.gramps import (
@@ -947,3 +947,11 @@ def test_a_drift_message_names_the_step_the_object_and_the_way_forward(tmp_path)
     assert "update the birth of Ardeth Pellow" in text
     assert "applied.json" in text
     assert "undo" in text
+
+
+def test_a_row_waiting_on_a_match_is_skipped_not_applied(tmp_path):
+    _, _, inputs, _ = world(tmp_path)
+    waiting = Change("w1", 1, "parent:2", DIFFERS, "Maren", "Marin", None, False, 2)
+    plan = build_plan([waiting], accept_all([waiting]), inputs)
+    assert len(plan.steps) == 0
+    assert any("parent:2" in s and "match" in s for s in plan.skipped)

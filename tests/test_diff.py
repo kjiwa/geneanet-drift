@@ -4,6 +4,7 @@ from geneanet_drift.diff import (
     MISSING_IN_HIS,
     NEW_PERSON,
     NEW_VALUE,
+    change_id,
     diff_people,
 )
 from geneanet_drift.gramps import GrampsCitation, GrampsEvent, GrampsMedia, GrampsNote
@@ -272,6 +273,87 @@ def test_parents_new_linked_new_unlinked_and_missing():
     }
     assert only(mine_changes, "parent:2").proposed == {"handle": "g2"}
     assert only(mine_changes, "parent:3").proposed == {"key": 3}
+
+
+def test_an_unresolved_parent_paired_by_candidates_is_one_waiting_row():
+    person = his(1, "Rowan", "Ashby", parents=(ref(2),))
+    mine = gramps("g1", "Rowan", "Ashby", parent_families=("f1",))
+    parent = gramps("g9", "Jiwa Bhim Karim", "Saleh")
+    changes = diff_one(
+        person,
+        mine,
+        extra_people=(his(2, "Jiwa", "Bhimji"),),
+        extra_mine=(parent,),
+        families=(family("f1", father="g9", mother=None),),
+        matches={1: LINK, 2: Match(CANDIDATES, candidates=("g9",))},
+    )
+    (row,) = [c for c in changes if c.person == 1]
+    assert (row.field, row.kind) == ("parent:2", DIFFERS)
+    assert row.his == "Jiwa Bhimji"
+    assert row.mine == "Jiwa Bhim Karim Saleh"
+    assert row.proposed is None
+    assert row.waiting_on == 2
+    assert row.id == change_id(1, "parent:2", "Jiwa Bhimji")
+
+
+def test_a_parent_whose_candidates_are_not_his_linked_parents_stays_new():
+    person = his(1, "Rowan", "Ashby", parents=(ref(2),))
+    mine = gramps("g1", "Rowan", "Ashby", parent_families=("f1",))
+    changes = diff_one(
+        person,
+        mine,
+        extra_people=(his(2, "Ivy", "Brook"),),
+        extra_mine=(gramps("g9", "Hugh", "Brook"), gramps("g8", "Ivy", "Brook")),
+        families=(family("f1", father="g9", mother=None),),
+        matches={1: LINK, 2: Match(CANDIDATES, candidates=("g8",))},
+    )
+    assert fields([c for c in changes if c.person == 1]) == {
+        ("parent:2", NEW_VALUE),
+        ("parent:I-g9", MISSING_IN_HIS),
+    }
+    assert all(c.waiting_on is None for c in changes)
+
+
+def test_an_unresolved_spouse_paired_by_candidates_is_one_waiting_union():
+    person = his(1, "Rowan", "Ashby", unions=(his_union(7, 2, children=[3]),))
+    mine = gramps("g1", "Rowan", "Ashby", families=("f1",))
+    changes = diff_one(
+        person,
+        mine,
+        extra_people=(his(2, "Nell", "Quill"), his(3, "Wren", "Ashby")),
+        extra_mine=(gramps("g2", "Nel", "Quil"),),
+        families=(family("f1", "g1", "g2"),),
+        matches={
+            1: LINK,
+            2: Match(CANDIDATES, candidates=("g2",)),
+            3: Match(NEW),
+        },
+    )
+    (row,) = [c for c in changes if c.person == 1]
+    assert (row.field, row.kind) == ("union:7", DIFFERS)
+    assert row.mine["spouse"] == "Nel Quil"
+    assert row.proposed is None
+    assert row.waiting_on == 2
+
+
+def test_a_child_awaiting_a_match_does_not_make_the_union_differ():
+    kid = gramps("g5", "Ada", "Ashby")
+    union = his_union(7, 2, children=[3])
+    person = his(1, "Rowan", "Ashby", unions=(union,))
+    mine = gramps("g1", "Rowan", "Ashby", families=("f1",))
+    people = (his(2, "Nell", "Quill"), his(3, "Wren", "Ashby"))
+    spouse = gramps("g2", "Nell", "Quill")
+    fam = (family("f1", "g1", "g2", children=["g5"]),)
+
+    def run(child_match):
+        matches = {1: LINK, 2: Match(LINKED, "g2"), 3: child_match}
+        changes = diff_one(person, mine, people, (spouse, kid), fam, matches)
+        return [c for c in changes if c.person == 1]
+
+    assert run(Match(CANDIDATES, candidates=("g5",))) == []
+    assert only(run(Match(NEW)), "union:7").kind == DIFFERS
+    stranger = Match(CANDIDATES, candidates=("g2",))
+    assert only(run(stranger), "union:7").kind == DIFFERS
 
 
 def union_case(his_union_, mine_families, extra_mine=()):

@@ -37,6 +37,7 @@ class Change:
     mine: object
     proposed: object
     sensitive: bool = False
+    waiting_on: int | None = None
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,14 @@ def change_id(person: int, field: str, his: object) -> str:
 
 
 def _change(
-    person: int, field: str, kind: str, his, mine, proposed, sensitive: bool = False
+    person: int,
+    field: str,
+    kind: str,
+    his,
+    mine,
+    proposed,
+    sensitive: bool = False,
+    waiting_on: int | None = None,
 ) -> Change:
     return Change(
         change_id(person, field, his),
@@ -64,6 +72,7 @@ def _change(
         mine,
         proposed,
         sensitive,
+        waiting_on,
     )
 
 
@@ -272,24 +281,35 @@ def _parent_handles(ctx: Context, mine: GrampsFullPerson) -> set[str]:
     return {p for f in families for p in (f.father, f.mother) if p}
 
 
+def _paired_handle(match: Match, free: set[str]) -> str | None:
+    return next((h for h in match.candidates if h in free), None)
+
+
 def _parent_changes(ctx: Context, person: Person, mine: GrampsFullPerson):
     present = _parent_handles(ctx, mine)
-    seen: set[str] = set()
-    for ref in person.parents:
-        if not _real(ctx, ref):
-            continue
+    refs = [r for r in person.parents if _real(ctx, r)]
+    free = present - {ctx.matches[r.key].handle for r in refs}
+    for ref in refs:
         match = ctx.matches[ref.key]
-        seen.add(match.handle or "")
-        if match.handle not in present:
-            yield _change(
-                person.key,
-                f"parent:{ref.key}",
-                NEW_VALUE,
-                _name_of(ctx, ref.key),
-                None,
-                _ref(ctx, ref.key),
-            )
-    for handle in sorted(present - seen):
+        if match.handle in present:
+            continue
+        name = _name_of(ctx, ref.key)
+        paired = None if match.kind == LINKED else _paired_handle(match, free)
+        field = f"parent:{ref.key}"
+        if paired is None:
+            yield _change(person.key, field, NEW_VALUE, name, None, _ref(ctx, ref.key))
+            continue
+        free.discard(paired)
+        yield _change(
+            person.key,
+            field,
+            DIFFERS,
+            name,
+            _handle_name(ctx, paired),
+            None,
+            waiting_on=ref.key,
+        )
+    for handle in sorted(free):
         field = f"parent:{ctx.mine[handle].gramps_id}"
         yield _change(
             person.key, field, MISSING_IN_HIS, None, _handle_name(ctx, handle), None
@@ -307,6 +327,22 @@ def _family_for(ctx: Context, union: Union, mine: GrampsFullPerson, claimed: set
             f
             for f in (ctx.families[h] for h in mine.families)
             if handle and handle in (f.father, f.mother) and f.handle not in claimed
+        ),
+        None,
+    )
+
+
+def _paired_family(
+    ctx: Context, union: Union, mine: GrampsFullPerson, claimed: set[str]
+):
+    if not _real(ctx, union.spouse):
+        return None
+    candidates = ctx.matches[union.spouse.key].candidates
+    return next(
+        (
+            f
+            for f in (ctx.families[h] for h in mine.families)
+            if f.handle not in claimed and set(candidates) & {f.father, f.mother}
         ),
         None,
     )
@@ -345,6 +381,10 @@ def _union_value(ctx: Context, union: Union, family: GrampsFamily | None) -> dic
     }
 
 
+def _child_present(match: Match, present: set[str]) -> bool:
+    return match.handle in present or bool(present & set(match.candidates))
+
+
 def _union_differs(ctx: Context, union: Union, family: GrampsFamily) -> bool:
     marriage = _marriage(family)
     present = set(family.children)
@@ -352,7 +392,7 @@ def _union_differs(ctx: Context, union: Union, family: GrampsFamily) -> bool:
         _date_differs(_date_value(union.date), marriage["date"])
         or _place_differs(union.place, marriage["place"])
         or any(
-            ctx.matches[c.key].handle not in present
+            not _child_present(ctx.matches[c.key], present)
             for c in union.children
             if _real(ctx, c)
         )
@@ -366,6 +406,19 @@ def _union_changes(ctx: Context, person: Person, mine: GrampsFullPerson):
         field = f"union:{union.key}"
         his = _union_view(ctx, union)
         proposed = _union_value(ctx, union, family)
+        if family is None and (family := _paired_family(ctx, union, mine, used)):
+            used.add(family.handle)
+            view = _family_view(ctx, family, mine.handle)
+            yield _change(
+                person.key,
+                field,
+                DIFFERS,
+                his,
+                view,
+                None,
+                waiting_on=union.spouse.key,
+            )
+            continue
         if family is None:
             yield _change(person.key, field, NEW_VALUE, his, None, proposed)
             continue
