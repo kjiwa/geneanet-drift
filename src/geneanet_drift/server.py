@@ -14,6 +14,7 @@ from geneanet_drift.config import Config, ConfigError
 from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
+    PLACE_PREFIX,
     Decision,
     DecisionError,
     load_decisions,
@@ -28,6 +29,7 @@ from geneanet_drift.review_data import (
     is_link,
     link_changes,
     people_view,
+    place_view,
     preview_view,
     summary_view,
     validate_edit,
@@ -133,6 +135,26 @@ class App:
             save_decisions(self.decisions_path, decisions)
         return {"ok": True}
 
+    def places(self) -> dict:
+        return {"places": place_view(self.review, self.decisions())}
+
+    def map_place(self, body: dict) -> dict:
+        text, handle = body.get("text"), body.get("handle")
+        known = {p["text"] for p in place_view(self.review, {})}
+        if not isinstance(text, str) or text not in known:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "unknown place text")
+        handles = {p.handle for p in self.review.tree.places}
+        if handle is not None and not (isinstance(handle, str) and handle in handles):
+            raise RequestError(HTTPStatus.BAD_REQUEST, "unknown Gramps place")
+        with self.lock:
+            kept = {
+                k: d for k, d in self.decisions().items() if k != PLACE_PREFIX + text
+            }
+            if handle is not None:
+                kept[PLACE_PREFIX + text] = Decision(EDITED, handle)
+            save_decisions(self.decisions_path, kept)
+        return {"ok": True}
+
     def media_path(self, key: str, name: str) -> Path | None:
         root = self.review.media_dir
         if root is None or not key.isdigit() or Path(name).name != name:
@@ -203,6 +225,10 @@ class Handler(BaseHTTPRequestHandler):
             return app.decide(self._body())
         if method == "POST" and path == "/api/link":
             return app.link(self._body())
+        if method == "GET" and path == "/api/places":
+            return app.places()
+        if method == "POST" and path == "/api/places":
+            return app.map_place(self._body())
         raise RequestError(HTTPStatus.NOT_FOUND, "not found")
 
     def _static(self, path: str) -> None:

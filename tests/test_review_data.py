@@ -1,8 +1,8 @@
 import pytest
 
 from geneanet_drift.capture import Address, Media, Note
-from geneanet_drift.decisions import ACCEPTED, REJECTED, Decision
-from geneanet_drift.gramps import GrampsMedia
+from geneanet_drift.decisions import ACCEPTED, EDITED, REJECTED, Decision
+from geneanet_drift.gramps import GrampsMedia, GrampsPlace
 from geneanet_drift.match_tree import CANDIDATES, LINKED
 from geneanet_drift.review_data import (
     Review,
@@ -12,6 +12,7 @@ from geneanet_drift.review_data import (
     field_changes,
     link_changes,
     people_view,
+    place_view,
 )
 from tests.builders import (
     SOURCE,
@@ -417,3 +418,62 @@ def _d(**parts):
 )
 def test_date_text_renders_each_date_shape(date, expected):
     assert date_text(date) == expected
+
+
+PLACES = [
+    GrampsPlace("p1", "Toronto, Ontario, Canada"),
+    GrampsPlace("p2", "Toronto"),
+    GrampsPlace("p3", "Ontario, Canada"),
+    GrampsPlace("p4", "Toronto Island, Toronto, Ontario, Canada"),
+    GrampsPlace("p5", "Toronto Beach, Toronto, Ontario, Canada"),
+]
+
+
+def place_review():
+    people = [
+        his(
+            1,
+            "Rowan",
+            "Ashby",
+            events=(
+                his_event("born", 1950, "Toronto, Canada"),
+                his_event("deceased", 1990, "Daressalaam"),
+            ),
+            unions=(his_union(1, 2, place="Toronto, Canada"),),
+        ),
+        his(2, "Nell", "Quill"),
+    ]
+    mine = tree(
+        [gramps("g1", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),))],
+        places=PLACES,
+    )
+    return review(people, mine)
+
+
+def test_place_view_counts_uses_and_suggests_shortest_titles_first():
+    rows = {r["text"]: r for r in place_view(place_review(), {})}
+    toronto = rows["Toronto, Canada"]
+    assert toronto["uses"] == 2
+    assert toronto["mapping"] is None
+    assert [s["handle"] for s in toronto["suggestions"]] == ["p1", "p5", "p4"]
+    assert rows["Daressalaam"]["uses"] == 1
+    assert rows["Daressalaam"]["suggestions"] == []
+
+
+def test_a_place_decision_maps_the_proposed_place_and_ignores_unknown_handles():
+    rev = place_review()
+    plain = {c.field: c for c in field_changes(rev, {})}
+    mapped = field_changes(rev, {"place:Daressalaam": Decision(EDITED, "p3")})
+    born = next(c for c in mapped if c.field == "event:deceased")
+    assert born.proposed["place"] == "Ontario, Canada"
+    assert born.his == plain["event:deceased"].his
+    assert born.id == plain["event:deceased"].id
+    gone = {"place:Daressalaam": Decision(EDITED, "missing")}
+    assert field_changes(rev, gone) == list(plain.values())
+    view = {r["text"]: r for r in place_view(rev, gone)}
+    assert view["Daressalaam"]["mapping"] is None
+    shown = place_view(rev, {"place:Daressalaam": Decision(EDITED, "p3")})
+    assert next(r for r in shown if r["text"] == "Daressalaam")["mapping"] == {
+        "handle": "p3",
+        "title": "Ontario, Canada",
+    }

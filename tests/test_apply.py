@@ -1,5 +1,6 @@
 import copy
 import json
+from dataclasses import replace
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlsplit
 
@@ -31,6 +32,7 @@ from geneanet_drift.gedcom import media_path
 from geneanet_drift.gramps import (
     GrampsClient,
     GrampsError,
+    GrampsPlace,
     GrampsWriter,
     References,
 )
@@ -332,15 +334,53 @@ def test_the_source_and_repository_are_skipped_when_the_source_exists(tmp_path):
     assert created
 
 
-def test_places_are_reused_by_hierarchy_title_and_only_missing_ones_created(tmp_path):
+def test_an_unknown_place_is_one_flat_place_named_exactly_his_text(tmp_path):
     plan, _, _ = build(tmp_path)
     (places,) = [s for s in plan.steps if s.summary.startswith("create places")]
     (oxbow,) = places.body
-    assert oxbow["name"]["value"] == "Oxbow Reach"
-    assert oxbow["placeref_list"][0]["ref"] == "pl-eastmere"
+    assert oxbow["name"]["value"] == "Oxbow Reach, Eastmere"
+    assert oxbow["placeref_list"] == []
+    assert places.summary == "create places: Oxbow Reach, Eastmere"
     person = next(s for s in plan.steps if s.summary == "create Wren Pellow")
     birth = next(o for o in person.body if o["_class"] == "Event")
     assert birth["place"] == oxbow["handle"]
+
+
+def test_known_places_are_reused_by_hierarchy_title(tmp_path):
+    plan, _, _ = build(tmp_path)
+    (places,) = [s for s in plan.steps if s.summary.startswith("create places")]
+    assert [o["name"]["value"] for o in places.body] == ["Oxbow Reach, Eastmere"]
+
+
+def test_two_uses_of_an_unknown_place_share_one_created_place(tmp_path):
+    people, mine, inputs, _ = world(tmp_path)
+    maren = people[2]
+    people = {
+        **people,
+        2: replace(maren, events=(his_event("born", 1903, "Oxbow Reach, Eastmere"),)),
+    }
+    inputs = replace(inputs, people=people)
+    changes = diff_people(people, mine, inputs.matches)
+    plan = build_plan(changes, accept_all(changes), inputs)
+    (places,) = [s for s in plan.steps if s.summary.startswith("create places")]
+    assert len(places.body) == 1
+    handle = places.body[0]["handle"]
+    used = [
+        o["place"]
+        for s in plan.steps
+        if isinstance(s.body, list)
+        for o in s.body
+        if o["_class"] == "Event" and o.get("place") == handle
+    ]
+    assert len(used) == 2
+
+
+def test_a_place_in_the_snapshot_but_not_in_the_references_is_drift(tmp_path):
+    _, mine, inputs, changes = world(tmp_path)
+    gone = GrampsPlace("pl-gone", "Oxbow Reach, Eastmere")
+    inputs = replace(inputs, tree=replace(mine, places=(gone,)))
+    with pytest.raises(DriftError, match="place changed since the snapshot"):
+        build_plan(changes, accept_all(changes), inputs)
 
 
 def test_a_new_person_is_one_transaction_with_citation_note_and_parent_family(tmp_path):

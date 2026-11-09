@@ -1,7 +1,7 @@
 import hashlib
 import json
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from geneanet_drift.capture import Event, Person, Ref, Union
@@ -48,6 +48,7 @@ class Context:
     mine: dict[str, GrampsFullPerson]
     families: dict[str, GrampsFamily]
     matches: dict[int, Match]
+    places: dict[str, str]  # his place text -> Gramps place title
 
 
 def change_id(person: int, field: str, his: object) -> str:
@@ -107,6 +108,14 @@ def _fact(date, place: str | None) -> dict:
     return {"date": _date_value(date), "place": place}
 
 
+def _mapped(places: dict[str, str], place: str | None) -> str | None:
+    return places.get(place, place) if place else place
+
+
+def _mapped_fact(places: dict[str, str], fact: dict) -> dict:
+    return {**fact, "place": _mapped(places, fact["place"])}
+
+
 def _refines(fine: dict, coarse: dict) -> bool:
     return (
         fine != coarse
@@ -136,21 +145,24 @@ def _is_blank(fact: dict | None) -> bool:
     return fact is None or (fact["date"] is None and not fact["place"])
 
 
-def _fact_changes(person: int, field: str, his: dict | None, mine: dict | None):
+def _fact_changes(
+    ctx: Context, person: int, field: str, his: dict | None, mine: dict | None
+):
     if _is_blank(his) and mine is None:
         return
+    wanted = _mapped_fact(ctx.places, his) if his else None
     if mine is None:
-        yield _change(person, field, NEW_VALUE, his, None, his)
+        yield _change(person, field, NEW_VALUE, his, None, wanted)
     elif his is None:
         yield _change(person, field, MISSING_IN_HIS, None, mine, None)
     elif _is_blank(his):
         return
     elif _date_differs(his["date"], mine["date"]) or _place_differs(
-        his["place"], mine["place"]
+        wanted["place"], mine["place"]
     ):
         proposed = {
             "date": _proposed_date(his["date"], mine["date"]),
-            "place": his["place"] or mine["place"],
+            "place": wanted["place"] or mine["place"],
         }
         yield _change(person, field, DIFFERS, his, mine, proposed)
 
@@ -179,11 +191,14 @@ def _mine_fact(event: GrampsEvent | None) -> dict | None:
     return _fact(event.date, event.place) if event else None
 
 
-def _event_changes(person: Person, mine: GrampsFullPerson) -> Iterator[Change]:
+def _event_changes(
+    ctx: Context, person: Person, mine: GrampsFullPerson
+) -> Iterator[Change]:
     for his_kind, kind in EVENT_KINDS.items():
         event = _his_event(person.events, his_kind)
         his = _fact(event.date, event.place) if event else None
         yield from _fact_changes(
+            ctx,
             person.key,
             f"event:{his_kind}",
             his,
@@ -399,7 +414,7 @@ def _union_value(ctx: Context, union: Union, family: GrampsFamily | None) -> dic
     return {
         "spouse": _ref(ctx, union.spouse.key) if _real(ctx, union.spouse) else None,
         "date": _proposed_date(_date_value(union.date), marriage["date"]),
-        "place": union.place or marriage["place"],
+        "place": _mapped(ctx.places, union.place) or marriage["place"],
         "children": children,
     }
 
@@ -413,7 +428,7 @@ def _union_differs(ctx: Context, union: Union, family: GrampsFamily) -> bool:
     present = set(family.children)
     return (
         _date_differs(_date_value(union.date), marriage["date"])
-        or _place_differs(union.place, marriage["place"])
+        or _place_differs(_mapped(ctx.places, union.place), marriage["place"])
         or any(
             not _child_present(ctx.matches[c.key], present)
             for c in union.children
@@ -462,7 +477,7 @@ def _linked_changes(ctx: Context, person: Person, match: Match) -> Iterator[Chan
     yield from _name_changes(person, mine)
     yield from _other_name_changes(person, mine)
     yield from _gender_changes(person, mine)
-    yield from _event_changes(person, mine)
+    yield from _event_changes(ctx, person, mine)
     yield from _occupation_changes(person, mine)
     yield from _note_changes(person, mine)
     yield from _media_changes(person, mine)
@@ -492,7 +507,7 @@ def _bundle(ctx: Context, person: Person) -> dict:
         "other_names": list(person.other_names),
         "occupation": person.occupation,
         "events": {
-            e.kind: _fact(e.date, e.place)
+            e.kind: _mapped_fact(ctx.places, _fact(e.date, e.place))
             for e in person.events
             if not _is_blank(_fact(e.date, e.place))
         },
@@ -508,9 +523,10 @@ def _bundle(ctx: Context, person: Person) -> dict:
 
 
 def _new_person_change(ctx: Context, person: Person) -> Change:
-    bundle = _bundle(ctx, person)
+    his = _bundle(replace(ctx, places={}), person)
+    proposed = _bundle(ctx, person)
     sensitive = any(_is_sensitive(n.kind) for n in person.notes)
-    return _change(person.key, "person", NEW_PERSON, bundle, None, bundle, sensitive)
+    return _change(person.key, "person", NEW_PERSON, his, None, proposed, sensitive)
 
 
 def _person_changes(ctx: Context, person: Person) -> Iterator[Change]:
@@ -524,12 +540,16 @@ def _person_changes(ctx: Context, person: Person) -> Iterator[Change]:
 
 
 def diff_people(
-    people: dict[int, Person], tree: GrampsTree, matches: dict[int, Match]
+    people: dict[int, Person],
+    tree: GrampsTree,
+    matches: dict[int, Match],
+    places: dict[str, str] | None = None,
 ) -> list[Change]:
     ctx = Context(
         people,
         {p.handle: p for p in tree.people},
         {f.handle: f for f in tree.families},
         matches,
+        places or {},
     )
     return [c for key in sorted(people) for c in _person_changes(ctx, people[key])]

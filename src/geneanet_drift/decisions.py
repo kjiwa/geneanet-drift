@@ -10,6 +10,7 @@ REJECTED = "rejected"
 EDITED = "edited"
 STATUSES = (ACCEPTED, REJECTED, EDITED)
 LINK_PREFIX = "link:"
+PLACE_PREFIX = "place:"
 
 
 class DecisionError(ValueError):
