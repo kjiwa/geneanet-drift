@@ -17,6 +17,7 @@ CANDIDATES = "candidates"
 NEW = "new"
 ROLES = ("parents", "spouses", "children")
 CONTRADICTING_ROLES = ("parents", "spouses")
+CHOSEN_WHY = "chosen by you"
 
 
 @dataclass(frozen=True)
@@ -134,19 +135,33 @@ def _crosswalk(people, tree, source, negatives) -> dict[int, tuple[str, str]]:
     }
 
 
+def _seed(crosswalk, chosen) -> dict[int, tuple[str, str]]:
+    """Choices first; a crosswalk entry for the same person or handle yields."""
+    seeded: dict[int, tuple[str, str]] = {}
+    for key, handle in sorted(chosen.items()):
+        if handle not in {h for h, _ in seeded.values()}:
+            seeded[key] = (handle, CHOSEN_WHY)
+    taken = {h for h, _ in seeded.values()}
+    return {
+        **{k: v for k, v in crosswalk.items() if k not in seeded and v[0] not in taken},
+        **seeded,
+    }
+
+
 def _pools(people, tree, negatives, matched) -> dict[int, list[Verdict]]:
     gramps = tuple(_gramps_person(p) for p in tree.people)
     ids = {p.handle: p.gramps_id for p in tree.people}
     taken = {handle for handle, _ in matched.values()}
     pools = {}
     for key, person in people.items():
-        if key in matched:
+        if key in matched and matched[key][1] != CHOSEN_WHY:
             continue
+        own = matched[key][0] if key in matched else None
         found = [
             c
             for c in name_candidates(display_name(person), gramps)
             if (name_key(display_name(person)), ids[c.handle]) not in negatives
-            and c.handle not in taken
+            and (c.handle not in taken or c.handle == own)
         ]
         pools[key] = narrow([year_verdict(_item(person), c) for c in found])
     return pools
@@ -221,8 +236,10 @@ def match_people(
     tree: GrampsTree,
     source: str,
     negatives: set[tuple[str, str]],
+    chosen: dict[int, str] | None = None,
 ) -> dict[int, Match]:
-    matched = _crosswalk(people, tree, source, negatives)
+    chosen = {k: h for k, h in (chosen or {}).items() if k in people}
+    matched = _seed(_crosswalk(people, tree, source, negatives), chosen)
     pools = _pools(people, tree, negatives, matched)
     relatives = _gramps_relatives(tree)
     graph = {key: _his_relatives(p) for key, p in people.items()}
@@ -235,5 +252,6 @@ def match_people(
 def _final(key, matched, pools, graph, relatives, taken) -> Match:
     if key in matched:
         handle, why = matched[key]
-        return Match(LINKED, handle, why=why)
+        pool = pools[key] if why == CHOSEN_WHY else ()
+        return Match(LINKED, handle, tuple(v.person.handle for v in pool), why=why)
     return _unmatched(pools[key], _resolved(graph[key], matched), relatives, taken)

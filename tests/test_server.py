@@ -14,8 +14,6 @@ from geneanet_drift.decisions import (
     Decision,
     load_decisions,
 )
-from geneanet_drift.diff import diff_people
-from geneanet_drift.match_tree import match_people
 from geneanet_drift.review_data import Review
 from geneanet_drift.server import TOKEN_HEADER, WEB_DIR, App, make_server, serve
 from geneanet_drift.wizard import review_tree
@@ -62,8 +60,7 @@ def synthetic_review(media_dir: Path | None) -> Review:
             gramps("h4", "Sage", "Harlow", citations=(crosswalk("Sage Harlow"),)),
         ]
     )
-    matches = match_people(people, mine, SOURCE, set())
-    return Review(people, mine, matches, diff_people(people, mine, matches), media_dir)
+    return Review(people, mine, SOURCE, frozenset(), media_dir)
 
 
 class Client:

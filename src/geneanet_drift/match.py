@@ -2,6 +2,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from functools import cache
 from pathlib import Path
 
 from geneanet_drift.config import read_json
@@ -27,6 +28,7 @@ class Verdict:
     conflict: str
 
 
+@cache
 def normalise(name: str) -> str:
     ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     letters = re.sub(r"[^a-z ]", "", re.sub(r"[-.]", " ", ascii_name.casefold()))
@@ -43,9 +45,17 @@ def _same_name(wanted: str, other: str) -> bool:
     return len(shorter) >= MIN_CONTAINED_WORDS and shorter <= longer
 
 
-def name_candidates(name: str, people: tuple[GrampsPerson, ...]) -> list[GrampsPerson]:
+@cache
+def _cached_candidates(
+    name: str, people: tuple[GrampsPerson, ...]
+) -> tuple[GrampsPerson, ...]:
     wanted = normalise(name)
-    return [p for p in people if _same_name(wanted, normalise(p.name))]
+    return tuple(p for p in people if _same_name(wanted, normalise(p.name)))
+
+
+def name_candidates(name: str, people: tuple[GrampsPerson, ...]) -> list[GrampsPerson]:
+    """Cached: review re-matches after every choice, and names never change."""
+    return list(_cached_candidates(name, people))
 
 
 def year_verdict(item: WorkItem, person: GrampsPerson) -> Verdict:

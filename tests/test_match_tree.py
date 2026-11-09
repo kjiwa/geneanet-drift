@@ -256,3 +256,57 @@ def test_two_people_proposing_one_gramps_person_both_stay_candidates():
     ]
     result = match(people, gramps_tree)
     assert result[2].kind == result[3].kind == CANDIDATES
+
+
+def twin_fathers():
+    return tree(
+        [
+            gramps("pa", "Hugh", "Ashby"),
+            gramps("pb", "Hugh", "Ashby"),
+            gramps("ka", "Rowan", "Ashby", parent_families=("fa",)),
+            gramps("kb", "Rowan", "Ashby", parent_families=("fb",)),
+        ],
+        [
+            family("fa", father="pa", children=["ka"]),
+            family("fb", father="pb", children=["kb"]),
+        ],
+    )
+
+
+def chosen_match(people, gramps_tree, chosen):
+    return match_people(his_people(*people), gramps_tree, SOURCE, set(), chosen)
+
+
+def test_a_chosen_parent_links_the_child_by_support():
+    people = father_and_son(("Hugh", "Ashby"))
+    assert match(people, twin_fathers())[2].kind == CANDIDATES
+    result = chosen_match(people, twin_fathers(), {1: "pb"})
+    assert (result[1].kind, result[1].handle) == (LINKED, "pb")
+    assert result[1].why == "chosen by you"
+    assert (result[2].kind, result[2].handle) == (LINKED, "kb")
+
+
+def test_a_chosen_person_keeps_its_pool_as_candidates():
+    result = chosen_match(father_and_son(("Hugh", "Ashby")), twin_fathers(), {1: "pb"})
+    assert set(result[1].candidates) == {"pa", "pb"}
+
+
+def test_a_chosen_pair_beats_a_crosswalk_for_the_same_person():
+    gramps_tree = tree(
+        [
+            gramps("g1", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),)),
+            gramps("g2", "Rowan", "Ashby"),
+        ]
+    )
+    result = chosen_match([his(1, "Rowan", "Ashby")], gramps_tree, {1: "g2"})
+    assert (result[1].kind, result[1].handle) == (LINKED, "g2")
+
+
+def test_a_chosen_pair_beats_a_crosswalk_for_the_same_handle():
+    gramps_tree = tree(
+        [gramps("g1", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),))]
+    )
+    people = [his(1, "Rowan", "Ashby"), his(2, "Mara", "Quill")]
+    result = chosen_match(people, gramps_tree, {2: "g1"})
+    assert (result[2].kind, result[2].handle) == (LINKED, "g1")
+    assert result[1].kind != LINKED

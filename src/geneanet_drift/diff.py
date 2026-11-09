@@ -441,9 +441,9 @@ def _person_changes(ctx: Context, person: Person) -> Iterator[Change]:
     match = ctx.matches[person.key]
     if match.kind == LINKED:
         yield from _linked_changes(ctx, person, match)
-    elif match.kind == CANDIDATES:
+    if match.kind in (LINKED, CANDIDATES):
         yield from _link_changes(ctx, person, match)
-    elif match.kind == NEW:
+    if match.kind == NEW:
         yield _new_person_change(ctx, person)
 
 

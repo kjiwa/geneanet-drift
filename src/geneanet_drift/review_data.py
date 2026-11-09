@@ -4,7 +4,13 @@ from pathlib import Path
 from geneanet_drift.apply import source_title
 from geneanet_drift.capture import MONTHS, Person, load_tree
 from geneanet_drift.config import Config
-from geneanet_drift.decisions import ACCEPTED, EDITED, LINK_PREFIX, Decision
+from geneanet_drift.decisions import (
+    ACCEPTED,
+    EDITED,
+    LINK_PREFIX,
+    Decision,
+    link_negatives,
+)
 from geneanet_drift.diff import (
     DIFFERS,
     MISSING_IN_HIS,
@@ -16,7 +22,6 @@ from geneanet_drift.diff import (
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import (
-    LINKED,
     Match,
     display_name,
     gramps_year,
@@ -46,30 +51,30 @@ FIELD_LABELS = {
 }
 PHOTO_TYPES = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 MAX_TEXT = 2000
-CHOSEN_WHY = "chosen by you"
 
 
 @dataclass(frozen=True)
 class Review:
     people: dict[int, Person]
     tree: GrampsTree
-    matches: dict[int, Match]
-    suggestions: list[Change]
+    source: str
+    negatives: frozenset[tuple[str, str]]
     media_dir: Path | None
 
 
+@dataclass(frozen=True)
+class Derived:
+    matches: dict[int, Match]
+    changes: list[Change]
+
+
 def load_review(cfg: Config, pages_dir: Path, snapshot: Path) -> Review:
-    people = load_tree(pages_dir, cfg.tree)
-    tree = read_tree(snapshot)
-    matches = match_people(
-        people, tree, source_title(cfg.tree), load_negatives(cfg.negatives_path)
-    )
     media = pages_dir.parent / "media"
     return Review(
-        people,
-        tree,
-        matches,
-        diff_people(people, tree, matches),
+        load_tree(pages_dir, cfg.tree),
+        read_tree(snapshot),
+        source_title(cfg.tree),
+        frozenset(load_negatives(cfg.negatives_path)),
         media if media.is_dir() else None,
     )
 
@@ -78,34 +83,39 @@ def is_link(change: Change) -> bool:
     return change.field.startswith(LINK_PREFIX)
 
 
-def link_changes(review: Review) -> list[Change]:
-    return [c for c in review.suggestions if is_link(c)]
-
-
-def chosen_links(review: Review, decisions: dict[str, Decision]) -> dict[int, Change]:
+def _accepted_links(changes: list[Change], decisions) -> dict[int, str]:
     return {
-        c.person: c
-        for c in link_changes(review)
-        if decisions.get(c.id) == Decision(ACCEPTED)
+        c.person: c.proposed["handle"]
+        for c in changes
+        if is_link(c) and decisions.get(c.id) == Decision(ACCEPTED)
     }
+
+
+def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
+    """Match and diff again with every accepted link chosen and rejected one negative.
+
+    Choices and negatives only accumulate, so the loop ends once a pass adds none.
+    """
+    chosen: dict[int, str] = {}
+    negatives = set(review.negatives)
+    while True:
+        matches = match_people(
+            review.people, review.tree, review.source, negatives, chosen
+        )
+        changes = diff_people(review.people, review.tree, matches)
+        found = {**chosen, **_accepted_links(changes, decisions)}
+        rejected = negatives | link_negatives(changes, decisions)
+        if found == chosen and rejected == negatives:
+            return Derived(matches, changes)
+        chosen, negatives = found, rejected
+
+
+def link_changes(review: Review, decisions: dict[str, Decision]) -> list[Change]:
+    return [c for c in derive(review, decisions).changes if is_link(c)]
 
 
 def field_changes(review: Review, decisions: dict[str, Decision]) -> list[Change]:
-    """Field-level changes, with every link the operator accepted treated as matched."""
-    chosen = {
-        key: Match(LINKED, link.proposed["handle"], why=CHOSEN_WHY)
-        for key, link in chosen_links(review, decisions).items()
-    }
-    changes = (
-        diff_people(review.people, review.tree, {**review.matches, **chosen})
-        if chosen
-        else review.suggestions
-    )
-    return [c for c in changes if not is_link(c)]
-
-
-def known_ids(review: Review, decisions: dict[str, Decision]) -> set[str]:
-    return {c.id for c in (*field_changes(review, decisions), *link_changes(review))}
+    return [c for c in derive(review, decisions).changes if not is_link(c)]
 
 
 def field_label(field: str) -> str:
@@ -312,39 +322,33 @@ def _state(rows: list[dict], matched: bool, new: bool) -> str:
     return "differs" if any(not r["informational"] for r in rows) else "unchanged"
 
 
-def _linked_handle(review: Review, key: int, chosen: dict[int, Change]) -> str | None:
-    if key in chosen:
-        return chosen[key].proposed["handle"]
-    return review.matches[key].handle
-
-
 def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
-    chosen = chosen_links(review, decisions)
+    derived = derive(review, decisions)
     by_person: dict[int, list[Change]] = {}
-    for change in field_changes(review, decisions):
-        by_person.setdefault(change.person, []).append(change)
+    links: dict[int, list[Change]] = {}
+    for change in derived.changes:
+        target = links if is_link(change) else by_person
+        target.setdefault(change.person, []).append(change)
     mine_by_handle = {p.handle: p for p in review.tree.people}
-    links = link_changes(review)
     result = []
     for key, person in sorted(review.people.items()):
         rows = [row_view(review, c, decisions) for c in by_person.get(key, [])]
-        handle = _linked_handle(review, key, chosen)
+        match = derived.matches[key]
         new = any(c.kind == NEW_PERSON for c in by_person.get(key, []))
         actionable = [r for r in rows if not r["informational"]]
-        found = mine_by_handle.get(handle)
+        found = mine_by_handle.get(match.handle)
         result.append(
             {
                 "key": key,
                 "name": display_name(person),
                 "years": _his_years(person),
-                "state": _state(rows, handle is not None, new),
+                "state": _state(rows, match.handle is not None, new),
                 "mine": found and {"id": found.gramps_id, "name": _mine_name(found)},
-                "why": CHOSEN_WHY if key in chosen else review.matches[key].why,
+                "why": match.why,
                 "changes": rows,
                 "candidates": [
                     _candidate_view(mine_by_handle[c.proposed["handle"]], c, decisions)
-                    for c in links
-                    if c.person == key
+                    for c in links.get(key, [])
                 ],
                 "actionable": len(actionable),
                 "decided": sum(1 for r in actionable if r["decision"]),
@@ -356,10 +360,9 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
 def accepted_changes(
     review: Review, decisions: dict[str, Decision]
 ) -> list[tuple[Change, Decision]]:
-    every = [*link_changes(review), *field_changes(review, decisions)]
     return [
         (c, decisions[c.id])
-        for c in every
+        for c in derive(review, decisions).changes
         if c.id in decisions and decisions[c.id].status in (ACCEPTED, EDITED)
     ]
 
