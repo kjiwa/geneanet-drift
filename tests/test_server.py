@@ -521,3 +521,25 @@ def test_a_place_decision_is_not_a_change(served):
     assert status == 200
     assert payload["summary"]["accepted"] == 0
     assert client.json("GET", "/api/preview")[1]["count"] == 0
+
+
+def test_changes_carry_every_gramps_place_title_for_the_datalist(served):
+    client, _, _ = served
+    payload = client.json("GET", "/api/changes")[1]
+    assert payload["place_titles"] == [
+        {"handle": "pl1", "title": "Lyon, Rhone, France"}
+    ]
+
+
+def test_a_row_shows_the_place_chosen_for_his_text(served):
+    client, _, _ = served
+
+    def birth_place():
+        row = first_row(client, "Birth")
+        return row["his_place"], row["id"]
+
+    before, change_id = birth_place()
+    assert before is None
+    client.json("POST", "/api/places", {"text": "Lyon", "handle": "pl1"})
+    after, same_id = birth_place()
+    assert (after, same_id) == ("Lyon, Rhone, France", change_id)

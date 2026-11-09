@@ -29,6 +29,7 @@ from geneanet_drift.review_data import (
     is_link,
     link_changes,
     people_view,
+    place_titles,
     place_view,
     preview_view,
     summary_view,
@@ -72,7 +73,11 @@ class App:
         decisions = self.decisions()
         people = people_view(self.review, decisions)
         accepted = preview_view(self.review, decisions)["count"]
-        return {"summary": summary_view(people, accepted), "people": people}
+        return {
+            "summary": summary_view(people, accepted),
+            "people": people,
+            "place_titles": place_titles(self.review),
+        }
 
     def preview(self) -> dict:
         return preview_view(self.review, self.decisions())

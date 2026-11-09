@@ -407,11 +407,19 @@ def _waiting_name(review: Review, change: Change) -> str | None:
     return display_name(review.people[change.waiting_on])
 
 
+def _his_place_title(change: Change, places: dict[str, str]) -> str | None:
+    """The Gramps title chosen for the place text on his side of a fact row."""
+    his = change.his
+    place = his.get("place") if isinstance(his, dict) else None
+    return places.get(place) if place else None
+
+
 def row_view(
     review: Review,
     change: Change,
     decisions: dict[str, Decision],
     matches: dict[int, Match],
+    places: dict[str, str],
 ) -> dict:
     kind = editable_kind(change)
     decision = decisions.get(change.id)
@@ -421,6 +429,7 @@ def row_view(
         "label": field_label(change.field),
         "kind": change.kind,
         "his": _his_lines(review, change, matches),
+        "his_place": _his_place_title(change, places),
         "mine": value_lines(change.mine),
         "proposed": _proposed_lines(change),
         "sensitive": change.sensitive,
@@ -494,10 +503,11 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
         target = links if is_link(change) else by_person
         target.setdefault(change.person, []).append(change)
     mine_by_handle = {p.handle: p for p in review.tree.people}
+    places = place_mapping(review, decisions)
     result = []
     for key, person in sorted(review.people.items()):
         rows = [
-            row_view(review, c, decisions, derived.matches)
+            row_view(review, c, decisions, derived.matches, places)
             for c in by_person.get(key, [])
         ]
         match = derived.matches[key]
@@ -616,6 +626,11 @@ def _place_mapping_view(titles: dict[str, str], decision: Decision | None):
     if decision is None or decision.value not in titles:
         return None
     return {"handle": decision.value, "title": titles[decision.value]}
+
+
+def place_titles(review: Review) -> list[dict]:
+    found = sorted(review.tree.places, key=lambda p: (p.title, p.handle))
+    return [{"handle": p.handle, "title": p.title} for p in found]
 
 
 def place_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
