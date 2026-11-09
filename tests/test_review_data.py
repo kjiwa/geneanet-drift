@@ -10,6 +10,7 @@ from geneanet_drift.review_data import (
 )
 from tests.builders import (
     SOURCE,
+    crosswalk,
     family,
     gramps,
     his,
@@ -117,3 +118,70 @@ def test_an_event_difference_of_a_cascaded_person_is_reported():
     chosen = link_to(rev, 1, "I-pb")
     changes = field_changes(rev, {chosen.id: Decision(ACCEPTED)})
     assert any(c.person == 2 and c.field == "event:born" for c in changes)
+
+
+def waiting_review():
+    mine = tree(
+        [
+            gramps("pa", "Hugh", "Ashby"),
+            gramps("pb", "Hugh", "Ashby"),
+            gramps(
+                "kb",
+                "Rowan",
+                "Ashby",
+                parent_families=("fb",),
+                citations=(crosswalk("Rowan Ashby"),),
+            ),
+        ],
+        [family("fb", father="pb", children=["kb"])],
+    )
+    people = [
+        his(1, "Hugh", "Ashby"),
+        his(2, "Rowan", "Ashby", parents=(ref(1),)),
+    ]
+    return review(people, mine)
+
+
+def rows_of(rev, key, decisions=None):
+    return {
+        r["label"]: r for r in people_view(rev, decisions or {})[key - 1]["changes"]
+    }
+
+
+def test_a_waiting_row_is_informational_and_names_the_person_to_match():
+    row = rows_of(waiting_review(), 2)["Parent"]
+    assert row["kind"] == "differs"
+    assert row["informational"] is True
+    assert (row["waiting_on"], row["waiting_name"]) == (1, "Hugh Ashby")
+    assert row["his"] == ["Hugh Ashby (no match yet)"]
+    assert row["mine"] == ["Hugh Ashby"]
+
+
+def test_a_row_that_waits_on_nobody_has_no_waiting_fields():
+    rows = rows_of(twin_review(), 1)
+    assert all(
+        r["waiting_on"] is None and r["waiting_name"] is None for r in rows.values()
+    )
+
+
+def test_relatives_that_will_be_created_are_marked_new_in_parent_and_union_rows():
+    mine = tree([gramps("k", "Rowan", "Ashby", citations=(crosswalk("Rowan Ashby"),))])
+    people = [
+        his(
+            2,
+            "Rowan",
+            "Ashby",
+            parents=(ref(1),),
+            unions=(his_union(5, 3, children=[4]),),
+        ),
+        his(1, "Hugh", "Ashby"),
+        his(3, "Nell", "Quill", sex="female"),
+        his(4, "Wren", "Ashby"),
+    ]
+    rows = rows_of(review(people, mine), 2)
+    assert rows["Parent"]["his"] == ["Hugh Ashby (new)"]
+    assert rows["Marriage or partnership"]["his"] == [
+        "Spouse: Nell Quill (new)",
+        "Children: Wren Ashby (new)",
+    ]
+    assert rows["Parent"]["informational"] is False

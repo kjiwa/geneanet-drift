@@ -22,6 +22,8 @@ from geneanet_drift.diff import (
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
 from geneanet_drift.match import load_negatives
 from geneanet_drift.match_tree import (
+    CANDIDATES,
+    NEW,
     Match,
     display_name,
     gramps_year,
@@ -258,13 +260,57 @@ def _proposed_lines(change: Change) -> list[str] | None:
     return value_lines(change.proposed)
 
 
-def _his_lines(review: Review, change: Change) -> list[str]:
+MARKERS = {CANDIDATES: " (no match yet)", NEW: " (new)"}
+
+
+def _marked(name: str, key: int, matches: dict[int, Match]) -> str:
+    return name + MARKERS.get(matches[key].kind, "")
+
+
+def _marked_union(review: Review, change: Change, matches: dict[int, Match]) -> dict:
+    his = change.his
+    key = int(change.field.split(":")[1])
+    union = next(u for u in review.people[change.person].unions if u.key == key)
+    real = [r for r in (union.spouse, *union.children) if r.key in review.people]
+    names = iter(
+        _marked(display_name(review.people[r.key]), r.key, matches) for r in real
+    )
+    spouse = next(names) if his["spouse"] is not None else None
+    return {**his, "spouse": spouse, "children": list(names)}
+
+
+def _marked_his(review: Review, change: Change, matches: dict[int, Match]):
+    kind, _, suffix = change.field.partition(":")
+    if change.kind not in (NEW_VALUE, DIFFERS) or kind not in ("parent", "union"):
+        return change.his
+    if kind == "parent":
+        return _marked(change.his, int(suffix), matches)
+    return _marked_union(review, change, matches)
+
+
+def _his_lines(
+    review: Review, change: Change, matches: dict[int, Match] | None = None
+) -> list[str]:
     if change.kind == NEW_PERSON:
         return person_lines(review.people[change.person])
-    return value_lines(change.mine if is_link(change) else change.his)
+    if is_link(change):
+        return value_lines(change.mine)
+    his = change.his if matches is None else _marked_his(review, change, matches)
+    return value_lines(his)
 
 
-def row_view(review: Review, change: Change, decisions: dict[str, Decision]) -> dict:
+def _waiting_name(review: Review, change: Change) -> str | None:
+    if change.waiting_on is None:
+        return None
+    return display_name(review.people[change.waiting_on])
+
+
+def row_view(
+    review: Review,
+    change: Change,
+    decisions: dict[str, Decision],
+    matches: dict[int, Match],
+) -> dict:
     kind = editable_kind(change)
     decision = decisions.get(change.id)
     edited = decision.value if decision and decision.status == EDITED else None
@@ -272,11 +318,13 @@ def row_view(review: Review, change: Change, decisions: dict[str, Decision]) -> 
         "id": change.id,
         "label": field_label(change.field),
         "kind": change.kind,
-        "his": _his_lines(review, change),
+        "his": _his_lines(review, change, matches),
         "mine": value_lines(change.mine),
         "proposed": _proposed_lines(change),
         "sensitive": change.sensitive,
-        "informational": change.kind == MISSING_IN_HIS,
+        "informational": change.kind == MISSING_IN_HIS or change.waiting_on is not None,
+        "waiting_on": change.waiting_on,
+        "waiting_name": _waiting_name(review, change),
         "editable": kind,
         "edit_seed": edit_seed(change, kind) if kind else None,
         "edit_lines": edit_lines(kind, edited) if edited is not None else None,
@@ -332,7 +380,10 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
     mine_by_handle = {p.handle: p for p in review.tree.people}
     result = []
     for key, person in sorted(review.people.items()):
-        rows = [row_view(review, c, decisions) for c in by_person.get(key, [])]
+        rows = [
+            row_view(review, c, decisions, derived.matches)
+            for c in by_person.get(key, [])
+        ]
         match = derived.matches[key]
         new = any(c.kind == NEW_PERSON for c in by_person.get(key, []))
         actionable = [r for r in rows if not r["informational"]]
