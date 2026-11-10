@@ -107,6 +107,5 @@ def cfg(tmp_path: Path) -> Config:
     data_dir.mkdir()
     (data_dir / "config.toml").write_text(
         f'tree = "example"\ngramps_url = "{BASE_URL}"\ngramps_user = "reader"\n'
-        'priority_surnames = ["Quillon"]\n'
     )
     return load_config(str(data_dir), {}, repo_root=tmp_path / "no-repo")

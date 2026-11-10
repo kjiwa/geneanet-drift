@@ -87,6 +87,7 @@ def _report_next(say: Say, pages: Path) -> None:
     say("  geneanet-drift review --pages DIR \\")
     say("    --snapshot FILE")
     say("  geneanet-drift apply --pages DIR")
+    say("  geneanet-drift undo --last N")
     say("  geneanet-drift gedcom --pages DIR \\")
     say("    --out FILE")
 
@@ -186,6 +187,7 @@ def apply_decisions(
             None,
             cfg.tree,
             cfg.gramps_url,
+            pages,
         ),
         decisions,
     )
@@ -269,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(
         prog="geneanet-drift",
-        description="Compare a captured Geneanet tree with a Gramps tree.",
+        description="Fold edits captured from a Geneanet tree into a Gramps Web tree, with review and undo",
     )
     parser.add_argument(
         "--data-dir", help="private data directory (default: GENEANET_DRIFT_DATA)"

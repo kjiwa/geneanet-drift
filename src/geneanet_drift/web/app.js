@@ -11,7 +11,7 @@ const STATUS_LABELS = { accepted: "Accepted", rejected: "Rejected", edited: "Edi
 const NOT_REVIEWED = "Not reviewed";
 
 const PLACE_LIST = "place-titles";
-const state = { data: null, places: null, query: "", hideDone: true, open: {}, editing: new Set(), errors: {} };
+const state = { data: null, places: null, placesFailed: false, query: "", hideDone: true, open: {}, editing: new Set(), errors: {}, drafts: {} };
 const view = document.getElementById("view");
 
 function h(tag, props = {}, ...kids) {
@@ -107,8 +107,11 @@ function lines(values, others, emptyText) {
 
 /* Skeletons */
 
+function block(size) {
+  return h("div", { class: "skeleton", "data-size": size });
+}
+
 function skeletonList() {
-  const block = (size) => h("div", { class: "skeleton", "data-size": size });
   return h("div", { "aria-hidden": "true" },
     block("title"),
     h("div", { class: "stats" }, ...[1, 2, 3, 4, 5].map(() => block("card"))),
@@ -117,7 +120,6 @@ function skeletonList() {
 }
 
 function skeletonPerson() {
-  const block = (size) => h("div", { class: "skeleton", "data-size": size });
   return h("div", { "aria-hidden": "true" },
     block("bar"), block("title"),
     h("div", { class: "skeleton-stack" }, block("row"), block("row")));
@@ -135,6 +137,7 @@ async function mutate(path, body, after = {}) {
     state.data = await api("/api/changes");
     if (routePlaces()) state.places = (await api("/api/places")).places;
     saved = true;
+    if (after.commit) after.commit();
   } catch (error) {
     flash(error.message);
   }
@@ -148,18 +151,24 @@ function decide(row, status) {
   return mutate("/api/decisions", { id: row.id, status: current === status ? "pending" : status });
 }
 
+function faultField(row, message) {
+  return row.editable === "fact" && /^the place/.test(message) ? "place" : "value";
+}
+
 function saveEdit(row, value) {
   state.errors[row.id] = null;
+  state.drafts[row.id] = value;
   return api("/api/decisions", { id: row.id, status: "edited", value })
     .then(() => api("/api/changes"))
     .then((data) => {
       state.data = data;
       state.editing.delete(row.id);
+      delete state.drafts[row.id];
       render({ keepFocus: `${row.id}:edit` });
     })
     .catch((error) => {
       state.errors[row.id] = error.message;
-      render({ keepFocus: `${row.id}:value` });
+      render({ keepFocus: `${row.id}:${faultField(row, error.message)}` });
     });
 }
 
@@ -215,12 +224,16 @@ function summaryStats(summary) {
     statCard(summary.unchanged, "Matched people with no differences"));
 }
 
+function changeCount(person) {
+  return `${plural(person.actionable, "change", "changes")} to review, ${person.decided} decided`;
+}
+
 function personMeta(person) {
   const parts = [];
   if (person.years) parts.push(person.years);
   if (person.state === "needs_match") parts.push(plural(person.candidates.length, "possible match", "possible matches"));
-  else if (person.state === "unchanged" && person.mine) parts.push(`Matched to "${person.mine.name}" (${person.mine.id})`);
-  else parts.push(`${plural(person.actionable, "change", "changes")} to review, ${person.decided} decided`);
+  else if (person.state === "unchanged" && person.mine) parts.push(`Matched to "${person.mine.name}" (Gramps ID ${person.mine.id})`);
+  else parts.push(changeCount(person));
   return parts.join(". ");
 }
 
@@ -240,6 +253,11 @@ function finished(person) {
   return (person.state === "new" || person.state === "differs") && person.actionable > 0 && person.decided >= person.actionable;
 }
 
+function leftToDecide(person) {
+  if (person.state === "needs_match") return true;
+  return (person.state === "new" || person.state === "differs") && !finished(person);
+}
+
 function isShown(person) {
   return matchesQuery(person) && !(state.hideDone && finished(person));
 }
@@ -247,7 +265,7 @@ function isShown(person) {
 function groupSection(group, people) {
   const shown = people.filter(isShown);
   const count = shown.length !== people.length ? `${shown.length} of ${plural(people.length, "person", "people")}` : plural(people.length, "person", "people");
-  const open = group.state in state.open ? state.open[group.state] : group.state !== "unchanged" && people.length > 0;
+  const open = group.state in state.open ? state.open[group.state] : people.some(leftToDecide);
   const body = shown.length
     ? h("ul", { class: "people" }, ...shown.map(personItem))
     : h("p", { class: "muted", text: people.length ? "No one here matches the search or has changes left to decide." : group.empty });
@@ -310,21 +328,24 @@ function badge(decision) {
 
 function editFields(row) {
   const error = state.errors[row.id];
-  const common = { "aria-invalid": error ? "true" : null, "aria-describedby": error ? `${row.id}-error` : null };
-  const current = row.decision && row.decision.status === "edited" ? row.decision.value : row.edit_seed;
+  const fault = error ? faultField(row, error) : null;
+  const flag = (name) => ({ "aria-invalid": fault === name ? "true" : null, "aria-describedby": fault === name ? `${row.id}-error` : null });
+  const saved = row.decision && row.decision.status === "edited" ? row.decision.value : row.edit_seed;
+  const current = row.id in state.drafts ? state.drafts[row.id] : saved;
   const message = error ? h("p", { class: "error", id: `${row.id}-error`, text: error }) : null;
   if (row.editable === "fact") {
     return [
       h("div", { class: "field" }, h("label", { for: `${row.id}-date`, text: "Date, as you want it written" }),
-        h("input", { id: `${row.id}-date`, name: "date_text", value: current.date_text, "data-focus": `${row.id}:value`, ...common })),
+        h("input", { id: `${row.id}-date`, name: "date_text", value: current.date_text, "data-focus": `${row.id}:value`, ...flag("value") })),
       h("div", { class: "field" }, h("label", { for: `${row.id}-place`, text: "Place" }),
-        h("input", { id: `${row.id}-place`, name: "place", value: current.place, list: PLACE_LIST, autocomplete: "off", ...common }), message),
+        h("input", { id: `${row.id}-place`, name: "place", value: current.place, list: PLACE_LIST, autocomplete: "off", "data-focus": `${row.id}:place`, ...flag("place") })),
+      message,
     ];
   }
   const control = row.editable === "note"
-    ? h("textarea", { id: `${row.id}-value`, name: "value", "data-focus": `${row.id}:value`, ...common }, current)
-    : h("input", { id: `${row.id}-value`, name: "value", value: current, "data-focus": `${row.id}:value`, ...common });
-  return [h("div", { class: "field" }, h("label", { for: `${row.id}-value`, text: "Value for Gramps" }), control, message)];
+    ? h("textarea", { id: `${row.id}-value`, name: "value", "data-focus": `${row.id}:value`, ...flag("value") }, current)
+    : h("input", { id: `${row.id}-value`, name: "value", value: current, "data-focus": `${row.id}:value`, ...flag("value") });
+  return [h("div", { class: "field" }, h("label", { for: `${row.id}-value`, text: "Value for Gramps" }), control), message];
 }
 
 function editForm(row) {
@@ -338,7 +359,7 @@ function editForm(row) {
   h("div", { class: "actions" },
     h("button", { class: "button", type: "submit", "data-variant": "primary", text: "Save edit" }),
     h("button", { class: "button", type: "button", text: "Cancel",
-      onclick: () => { state.editing.delete(row.id); state.errors[row.id] = null; render({ keepFocus: `${row.id}:edit` }); } })));
+      onclick: () => { state.editing.delete(row.id); state.errors[row.id] = null; delete state.drafts[row.id]; render({ keepFocus: `${row.id}:edit` }); } })));
   return form;
 }
 
@@ -366,14 +387,14 @@ function changeRow(row) {
   const both = row.his.length > 0 && row.mine.length > 0;
   const hisEmpty = row.informational ? "Not in his tree." : "Nothing recorded.";
   return h("article", { class: "row", "aria-label": row.label },
-    h("div", { class: "row-head" }, h("h3", { text: row.label }), row.informational ? null : badge(row.decision)),
+    h("div", { class: "row-head" }, h("h3", { tabindex: "-1", "data-focus": `${row.id}:heading`, text: row.label }), row.informational ? null : badge(row.decision)),
     row.sensitive ? h("p", { class: "status", role: "note",
       text: "Sensitive: this note may hold private contact details. Read it before accepting." }) : null,
     h("div", { class: "compare" },
       h("div", { class: "cell" }, h("p", { class: "cell-label", text: "His tree" }), ...lines(row.his, both ? row.mine : [], hisEmpty),
-        row.his_place ? h("p", { class: "muted", text: `Your place: "${row.his_place}"` }) : null,
+        row.his_place ? h("p", { class: "muted", text: `Gramps place: "${row.his_place}"` }) : null,
         row.photo ? h("img", { class: "thumb", src: row.photo, alt: row.his[0] || "Captured photo" }) : null),
-      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Mine (Gramps)" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
+      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Gramps" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
     row.proposed ? h("p", { class: "muted", text: `Gramps would hold: ${row.proposed.join("; ")}` }) : null,
     row.edit_lines ? h("p", { text: `Your edit: ${row.edit_lines.join("; ")}` }) : null,
     row.waiting_on === null ? null : waitingNote(row),
@@ -389,12 +410,12 @@ function openLink(url, text) {
 
 function candidateItem(person, candidate) {
   const chosen = candidate.decision && candidate.decision.status === "accepted";
-  const label = [candidate.name, `(${candidate.gramps_id})`, candidate.years].filter(Boolean).join(" ");
+  const label = [candidate.name, `(Gramps ID ${candidate.gramps_id})`, candidate.years].filter(Boolean).join(" ");
   const text = chosen ? "Chosen. Undo" : "Use this person";
   return h("li", {}, h("span", { text: label }),
     h("span", { class: "actions" }, openLink(candidate.mine_url, "Open in Gramps"),
       h("button", { class: "button", type: "button", "aria-pressed": chosen ? "true" : "false",
-        "aria-label": `${text}: ${candidate.name} (${candidate.gramps_id}) for "${person.name}"`,
+        "aria-label": `${text}: ${candidate.name} (Gramps ID ${candidate.gramps_id}) for "${person.name}"`,
         "data-focus": `${candidate.change}:link`, text,
         onclick: () => chooseLink(person, chosen ? null : candidate.change) })));
 }
@@ -432,7 +453,7 @@ function matchSection(person) {
 }
 
 function personSummary(person) {
-  const base = [person.years, person.mine ? `Matched to "${person.mine.name}" (${person.mine.id}): ${person.why}` : null];
+  const base = [person.years, person.mine ? `Matched to "${person.mine.name}" (Gramps ID ${person.mine.id}): ${person.why}` : null];
   return h("p", { class: "muted", text: base.filter(Boolean).join(". ") || "No dates recorded." });
 }
 
@@ -452,14 +473,21 @@ function personView(person) {
     personSummary(person),
     h("p", { class: "links" }, openLink(person.his_url, "Open in Geneanet"), person.mine && openLink(person.mine.url, "Open in Gramps")),
     matchSection(person),
-    h("h2", { text: `Changes (${rows.filter((r) => !r.informational).length} to review)` }), ...body);
+    h("h2", { text: changeCount(person) }), ...body);
+}
+
+function missingPersonView() {
+  return h("div", {},
+    h("a", { class: "back", href: "#/", text: "Back to all people" }),
+    h("h1", { tabindex: "-1", text: "Person not found" }),
+    h("p", { class: "status", role: "status", text: "No person has this number." }));
 }
 
 /* Places view */
 
 function placeStatus(place) {
   if (!place.mapping) return h("p", { text: `Will create a new place named "${place.text}"` });
-  return h("p", {}, `Your place: "${place.mapping.title}"`);
+  return h("p", {}, `Gramps place: "${place.mapping.title}"`);
 }
 
 function placeButton(place, index, action, label, handle) {
@@ -475,13 +503,14 @@ function placeForm(place, index) {
       event.preventDefault();
       const title = new FormData(form).get("title");
       const found = state.data.place_titles.find((p) => p.title === title);
+      state.drafts[key] = title;
       state.errors[key] = found ? null : "Choose one of the Gramps place titles in the list.";
-      if (found) mutate("/api/places", { text: place.text, handle: found.handle });
+      if (found) mutate("/api/places", { text: place.text, handle: found.handle }, { commit: () => { delete state.drafts[key]; } });
       else render({ keepFocus: `${key}:title` });
     },
   },
   h("div", { class: "field" }, h("label", { for: `${key}-title`, text: "Another Gramps place" }),
-    h("input", { id: `${key}-title`, name: "title", list: PLACE_LIST, autocomplete: "off", "data-focus": `${key}:title`,
+    h("input", { id: `${key}-title`, name: "title", value: state.drafts[key] || "", list: PLACE_LIST, autocomplete: "off", "data-focus": `${key}:title`,
       "aria-invalid": error ? "true" : null, "aria-describedby": error ? `${key}-error` : null }),
     error ? h("p", { class: "error", id: `${key}-error`, text: error }) : null),
   h("div", { class: "actions" }, h("button", { class: "button", type: "submit", text: "Save" })));
@@ -492,12 +521,12 @@ function placeRow(place, index) {
   const chosen = place.mapping && place.mapping.handle;
   const suggestions = place.suggestions.filter((s) => s.handle !== chosen);
   return h("article", { class: "row", "aria-label": place.text },
-    h("div", { class: "row-head" }, h("h3", { text: `"${place.text}"` }),
+    h("div", { class: "row-head" }, h("h3", { tabindex: "-1", "data-focus": `place-${index}:heading`, text: `"${place.text}"` }),
       h("span", { class: "muted", text: `Used ${plural(place.uses, "time", "times")}` })),
     placeStatus(place),
     h("div", { class: "actions" },
       place.mapping ? placeButton(place, index, "clear", "Clear", null) : null,
-      ...suggestions.map((s) => placeButton(place, index, `use-${s.handle}`, `Use ${s.title}`, s.handle))),
+      ...suggestions.map((s) => placeButton(place, index, `use-${s.handle}`, `Use "${s.title}"`, s.handle))),
     placeForm(place, index));
 }
 
@@ -536,7 +565,17 @@ function routePerson() {
 
 function updateApply() {
   const count = state.data ? state.data.summary.accepted : 0;
-  document.getElementById("apply").textContent = `Apply ${plural(count, "accepted change", "accepted changes")}`;
+  document.getElementById("apply").textContent = `Accepted changes (${count})`;
+}
+
+function focusTarget(key) {
+  return [...view.querySelectorAll("[data-focus]")].find((node) => node.dataset.focus === key);
+}
+
+function focusOrFallback(key) {
+  const owner = key.slice(0, key.lastIndexOf(":"));
+  const target = focusTarget(key) || focusTarget(`${owner}:heading`) || view.querySelector("h1");
+  if (target) target.focus();
 }
 
 function render({ keepFocus = null, moveFocus = false } = {}) {
@@ -562,16 +601,16 @@ function render({ keepFocus = null, moveFocus = false } = {}) {
   view.removeAttribute("aria-busy");
   const key = routePerson();
   const person = key === null ? null : state.data.people.find((p) => p.key === key);
-  view.replaceChildren(routePlaces() ? placesView() : person ? personView(person) : listView());
-  document.title = routePlaces() ? "Places - Review changes" : person ? `${person.name} - Review changes` : "Review changes";
+  if (key !== null && !person && !routePlaces()) {
+    view.replaceChildren(missingPersonView());
+    document.title = "No such person - Review changes";
+  } else {
+    view.replaceChildren(routePlaces() ? placesView() : person ? personView(person) : listView());
+    document.title = routePlaces() ? "Places - Review changes" : person ? `${person.name} - Review changes` : "Review changes";
+  }
   updateApply();
   if (moveFocus) view.querySelector("h1").focus();
-  if (keepFocus) {
-    const target = view.querySelector(`[data-focus="${keepFocus}"]`);
-    if (target) {
-      target.focus();
-    }
-  }
+  if (keepFocus) focusOrFallback(keepFocus);
 }
 
 /* Plan dialog */
@@ -579,7 +618,21 @@ function render({ keepFocus = null, moveFocus = false } = {}) {
 function planItem(item) {
   const text = `${item.action}: ${item.label} for "${item.person}"${item.edited ? " (edited)" : ""}`;
   return h("li", {}, text, item.sensitive ? h("span", { class: "muted", text: " Sensitive note." }) : null,
-    item.lines.length ? h("div", { class: "muted", text: item.lines.join("; ") }) : null);
+    item.lines.length ? h("div", { class: "muted", text: item.lines.join("; ") }) : null,
+    item.reason ? h("div", { class: "muted", text: `Not written: ${item.reason}.` }) : null);
+}
+
+function planBody(plan) {
+  if (!plan.count) {
+    return [h("p", { class: "status", role: "status", text: "No changes are accepted yet. Accept some changes first." })];
+  }
+  return [
+    plan.items.length ? h("ol", { class: "plan" }, ...plan.items.map(planItem)) : null,
+    plan.skipped.length ? h("h3", { text: "Not written" }) : null,
+    plan.skipped.length ? h("ol", { class: "plan" }, ...plan.skipped.map(planItem)) : null,
+    h("p", { text: "Nothing is written from this page. Run this in a terminal; it saves a backup of Gramps, lists the exact steps and asks before writing:" }),
+    h("p", {}, h("code", { text: plan.command })),
+  ];
 }
 
 async function openPlan() {
@@ -587,10 +640,8 @@ async function openPlan() {
   const body = document.getElementById("plan-body");
   try {
     const plan = await api("/api/preview");
-    document.getElementById("plan-title").textContent = `Apply ${plural(plan.count, "accepted change", "accepted changes")}`;
-    body.replaceChildren(plan.count
-      ? h("ol", { class: "plan" }, ...plan.items.map(planItem))
-      : h("p", { class: "status", role: "status", text: "No changes are accepted yet. Accept some changes first." }));
+    document.getElementById("plan-title").textContent = `Accepted changes (${plan.count})`;
+    body.replaceChildren(...planBody(plan));
   } catch (error) {
     body.replaceChildren(h("p", { class: "status", "data-kind": "error", role: "alert", text: error.message }));
   }

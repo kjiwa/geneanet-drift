@@ -17,7 +17,7 @@ from geneanet_drift.decisions import (
     save_decisions,
 )
 from geneanet_drift.gramps import GrampsPlace
-from geneanet_drift.review_data import Review, derive, people_view
+from geneanet_drift.review_data import Review, apply_command, derive, people_view
 from geneanet_drift.server import (
     TOKEN_HEADER,
     WEB_DIR,
@@ -74,7 +74,14 @@ def synthetic_review(media_dir: Path | None) -> Review:
         places=[GrampsPlace("pl1", "Lyon, Rhone, France")],
     )
     return Review(
-        people, mine, SOURCE, frozenset(), media_dir, "example", "http://gramps.test/"
+        people,
+        mine,
+        SOURCE,
+        frozenset(),
+        media_dir,
+        "example",
+        "http://gramps.test/",
+        Path("pages"),
     )
 
 
@@ -114,7 +121,7 @@ def media_dir(tmp_path):
 
 @pytest.fixture
 def served(tmp_path, media_dir):
-    cfg = Config("example", "http://gramps.test", (), tmp_path / "data", tmp_path)
+    cfg = Config("example", "http://gramps.test", tmp_path / "data", tmp_path)
     cfg.data_dir.mkdir()
     server = make_server(cfg, synthetic_review(media_dir), 0)
     app = server.RequestHandlerClass.app
@@ -192,6 +199,7 @@ def test_api_requires_the_token(served):
     for method, path, body in (
         ("GET", "/api/changes", None),
         ("GET", "/api/preview", None),
+        ("GET", "/api/places", None),
         ("POST", "/api/decisions", {"id": "x", "status": "accepted"}),
         ("POST", "/api/link", {"person": 3, "change": None}),
     ):
@@ -207,6 +215,8 @@ def test_api_requires_the_token(served):
 def test_host_header_must_be_loopback(served):
     client, _, _ = served
     status, _ = client.json("GET", "/api/changes", headers={"Host": "evil.test"})
+    assert status == 403
+    status, _ = client.json("GET", "/api/places", headers={"Host": "evil.test"})
     assert status == 403
     response, _ = client.request("GET", "/", headers={"Host": "evil.test:80"})
     assert response.status == 403
@@ -324,8 +334,13 @@ def test_link_refuses_a_candidate_of_another_person(served):
 
 
 def test_preview_renders_accepted_changes_as_a_plan(served):
-    client, _, _ = served
-    assert client.json("GET", "/api/preview")[1] == {"count": 0, "items": []}
+    client, cfg, _ = served
+    assert client.json("GET", "/api/preview")[1] == {
+        "count": 0,
+        "items": [],
+        "skipped": [],
+        "command": apply_command(Path("pages"), cfg.decisions_path.parent),
+    }
     birth, note = first_row(client), first_row(client, "Note")
     new_person = people_by_name(client)["Ivy Marlowe"]["changes"][0]
     client.json("POST", "/api/decisions", {"id": birth["id"], "status": "accepted"})
@@ -405,13 +420,13 @@ def test_shared_styles_match_the_extension(name):
 
 
 def test_review_command_rejects_a_missing_pages_directory(tmp_path):
-    cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
+    cfg = Config("example", "http://gramps.test", tmp_path, tmp_path)
     with pytest.raises(ConfigError, match="not a directory"):
         review_tree(cfg, tmp_path / "missing", tmp_path / "tree.json", 0, print)
 
 
 def test_review_command_rejects_an_invalid_port(tmp_path):
-    cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
+    cfg = Config("example", "http://gramps.test", tmp_path, tmp_path)
     with pytest.raises(ConfigError, match="not a port"):
         review_tree(cfg, tmp_path, tmp_path / "tree.json", 70000, print)
 
@@ -460,14 +475,16 @@ def test_non_integer_content_length_is_a_bad_request(served):
 
 def test_review_command_reports_a_port_that_cannot_be_bound(tmp_path, served):
     _, _, server = served
-    cfg = Config("example", "http://gramps.test", (), tmp_path, tmp_path)
+    cfg = Config("example", "http://gramps.test", tmp_path, tmp_path)
     with pytest.raises(ConfigError, match="listen"):
         serve(cfg, synthetic_review(None), server.server_address[1], print)
 
 
 def test_a_choice_offered_through_a_relative_can_be_undone(tmp_path):
     app = App(relative_review(), tmp_path / "decisions.json")
-    offered = people_view(app.review, {})[1]["candidates"][0]["change"]
+    offered = people_view(app.review, {}, derive(app.review, {}))[1]["candidates"][0][
+        "change"
+    ]
     app.link({"person": 2, "change": offered})
     assert app.decisions() == {offered: Decision(ACCEPTED)}
     app.link({"person": 2, "change": None})
@@ -587,7 +604,9 @@ def test_link_refuses_a_person_who_is_not_in_his_tree(served):
 
 def test_choosing_after_refusing_replaces_the_refusal(tmp_path):
     app = App(synthetic_review(None), tmp_path / "decisions.json")
-    first = people_view(app.review, {})[2]["candidates"][0]["change"]
+    first = people_view(app.review, {}, derive(app.review, {}))[2]["candidates"][0][
+        "change"
+    ]
     save_decisions(app.decisions_path, {f"{NONE_PREFIX}3": Decision("rejected")})
     app.link({"person": 3, "change": first})
     assert app.decisions() == {first: Decision(ACCEPTED)}
@@ -595,7 +614,44 @@ def test_choosing_after_refusing_replaces_the_refusal(tmp_path):
 
 def test_none_replaces_earlier_choices_of_that_person(tmp_path):
     app = App(synthetic_review(None), tmp_path / "decisions.json")
-    first = people_view(app.review, {})[2]["candidates"][0]["change"]
+    first = people_view(app.review, {}, derive(app.review, {}))[2]["candidates"][0][
+        "change"
+    ]
     app.link({"person": 3, "change": first})
     app.link({"person": 3, "change": "none"})
     assert app.decisions() == {f"{NONE_PREFIX}3": Decision("rejected")}
+
+
+def test_switching_a_link_replaces_the_earlier_choice(served):
+    client, cfg, _ = served
+    first, second = (
+        c["change"] for c in people_by_name(client)["Wren Calloway"]["candidates"]
+    )
+    client.json("POST", "/api/link", {"person": 3, "change": first})
+    status, _ = client.json("POST", "/api/link", {"person": 3, "change": second})
+    assert status == 200
+    assert load_decisions(cfg.decisions_path) == {second: Decision(ACCEPTED)}
+
+
+def test_an_unexpected_failure_is_json_and_reaches_the_terminal(
+    served, monkeypatch, capsys
+):
+    def broken(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(App, "changes", broken)
+    client, _, _ = served
+    status, payload = client.json("GET", "/api/changes")
+    assert status == 500
+    assert payload == {"error": "The review server failed; see the terminal."}
+    assert "RuntimeError: boom" in capsys.readouterr().err
+
+
+def test_a_refused_status_is_quoted_in_the_error(served):
+    client, _, _ = served
+    row = first_row(client)
+    status, payload = client.json(
+        "POST", "/api/decisions", {"id": row["id"], "status": "maybe"}
+    )
+    assert status == 400
+    assert payload["error"] == 'unknown decision status "maybe"'

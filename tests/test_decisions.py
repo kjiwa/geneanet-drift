@@ -10,7 +10,6 @@ from geneanet_drift.decisions import (
     REJECTED,
     Decision,
     DecisionError,
-    decide,
     link_negatives,
     load_decisions,
     save_decisions,
@@ -35,13 +34,6 @@ def test_decisions_round_trip(tmp_path):
     }
     save_decisions(path, decisions)
     assert load_decisions(path) == decisions
-
-
-def test_decide_replaces_without_mutating():
-    before = {"a": Decision(ACCEPTED)}
-    after = decide(before, "a", Decision(REJECTED))
-    assert before["a"].status == ACCEPTED
-    assert after["a"].status == REJECTED
 
 
 @pytest.mark.parametrize(
@@ -115,3 +107,9 @@ def test_write_syncs_the_file_before_replacing_it(tmp_path, monkeypatch):
     )
     save_decisions(tmp_path / "decisions.json", {"a": Decision(ACCEPTED)})
     assert order == ["fsync", "replace"]
+
+
+def test_a_refused_status_is_quoted_not_shown_as_a_python_repr():
+    with pytest.raises(DecisionError) as raised:
+        Decision("maybe")
+    assert str(raised.value) == 'unknown decision status "maybe"'

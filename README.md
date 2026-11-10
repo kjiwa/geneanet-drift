@@ -28,6 +28,10 @@ for the person. The private data directory holds `decisions.json`,
 `applied.json`, `backups/` and an optional hand-written `negatives.json` of
 rejected pairings.
 
+`decisions.json` holds the field decisions and three kinds of entry: `link:`
+(a chosen Gramps match), `none:<his person number>` ("None of these is the same
+person") and `place:` (a place text mapped to a Gramps place).
+
 ## Install
 
 `uv tool install .` or `pip install .`; everything below is identical either way.
@@ -59,11 +63,12 @@ refuses to remember: the Gramps passwords.
 
 The data directory holds `config.toml`, `.env` and the tool's state. Point
 `--data-dir` or `GENEANET_DRIFT_DATA` at it (default
-`$XDG_DATA_HOME/geneanet-drift`), then copy `config.example.toml` there as
+`$XDG_DATA_HOME/geneanet-drift`, else `~/.local/share/geneanet-drift`), then copy `config.example.toml` there as
 `config.toml`.
 
 `tree` is the slug in your relative's Geneanet URL with the `_w` suffix removed:
-`https://gw.geneanet.org/example_w` is `tree = "example"`.
+`https://gw.geneanet.org/example_w` is `tree = "example"`. The extension's Tree
+name takes the same value.
 
 | setting | environment | `.env` | `config.toml` | prompt |
 |---|---|---|---|---|
@@ -93,7 +98,9 @@ sequences or multi-line values.
 Run these in order. `DIR` is the capture folder, by default
 `~/Downloads/geneanet-drift/<tree>/pages`.
 
-1. Capture. `geneanet-drift` (the same as `geneanet-drift capture-status`) reads
+1. Capture. `geneanet-drift` with no command is `geneanet-drift capture-status`;
+   its options need the command spelled out, so `geneanet-drift --since
+   2026-01-01` is an error (exit status 2). It reads
    the saved change log `DIR/history-editing.html` and lists every person in it
    whose captured page is missing or older than their newest change (file time
    against the change time), each with the address to open. No sync state is
@@ -101,18 +108,16 @@ Run these in order. `DIR` is the capture folder, by default
    compared as written against your local file times, so a change within a few
    hours of a capture may need a manual check. Open those pages with the
    extension on, rerun to check, and repeat until nothing is left. Options:
-   `--pages DIR`, `--since YYYY-MM-DD` to list only changes from that date on,
-   and `--feed FILE` to read a pasted copy of the change log (the page in
+   `capture-status --pages DIR`, `--since YYYY-MM-DD` to list only changes from
+   that date on, and `--feed FILE` to read a pasted copy of the change log (the page in
    English, select-all, paste into a plain-text file) instead of the saved
    page.
 2. Snapshot. `geneanet-drift snapshot --out FILE` saves the Gramps tree (read
    user) to a JSON file outside this repository.
 3. Review. `geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves
    the review page on `127.0.0.1` (default: a free port) and prints its URL.
-   Accept, edit or reject each change, and choose the matching Gramps person
-   where names are ambiguous. Decisions are saved to `decisions.json`, so a
-   review can span sittings. Photos show only when their originals were saved
-   next to `DIR` (`../media/person-<n>/`).
+   Decisions are saved to `decisions.json`, so a review can span sittings. See
+   Review page below.
 4. Apply. `geneanet-drift apply --pages DIR` builds a plan from the accepted
    decisions, prints it (the dry run is always shown), and writes it only after
    you type the confirmation. Before any write it saves a Gramps XML backup to
@@ -130,6 +135,29 @@ Run these in order. `DIR` is the capture folder, by default
 Keep the data directory in its own private repository, and list `.env` in that
 repository's `.gitignore`. The tool refuses to run if the data
 directory is inside its own git work tree.
+
+### Review page
+
+People are grouped as Needs a match, New in his tree, Differs and Unchanged.
+"Hide people with no changes left to decide" is on by default; a group opens
+when something in it is left to decide.
+
+- Needs a match: each person lists the Gramps candidates inline. "Use this
+  person" chooses one ("Chosen. Undo" reverts it); "None of these is the same
+  person" marks the person as new. A notice after each choice says how many people still need a
+  match, and counts relatives whose match the choice settled. Open in Gramps and
+  Open in Geneanet open the person in a new tab.
+- Differs and New: accept, edit or reject each change. Edit opens a form for
+  the value Gramps would hold. A change that depends on an unmatched relative
+  waits until that relative has a match.
+- Places: each place text in his tree maps to a Gramps place. Use a suggestion,
+  type another Gramps place title, or Clear. A text with no choice becomes one new
+  place, named exactly as in his tree, when applied.
+- Photos show only when their originals were saved with the extension's Save
+  originals button, next to `DIR` (`../media/person-<n>/`).
+- "Accepted changes (N)" opens a read-only dialog listing what `apply` will
+  write, what it will not and why, and the command to run. Nothing is written
+  from the page.
 
 ## Keeping personal data out of this repository
 

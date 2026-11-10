@@ -8,6 +8,3 @@ gramps_url = "https://gramps.example.org"
 gramps_user = "drift-reader"
 # Only `apply` and `undo` write, and only as this Editor user (GRAMPS_WRITE_PASSWORD).
 gramps_write_user = "drift-editor"
-
-# Surnames on the line you share with the tree owner; their clusters sort first.
-priority_surnames = ["Quillon"]

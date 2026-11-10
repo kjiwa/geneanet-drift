@@ -13,7 +13,7 @@ from geneanet_drift import records
 from geneanet_drift.capture import Person
 from geneanet_drift.config import read_json, write_json_atomic
 from geneanet_drift.decisions import ACCEPTED, EDITED, Decision
-from geneanet_drift.diff import EVENT_KINDS, MISSING_IN_HIS, NEW_VALUE, Change
+from geneanet_drift.diff import EVENT_KINDS, LINK_PREFIX, NEW_VALUE, Change, skip_reason
 from geneanet_drift.feed import name_key, tree_url
 from geneanet_drift.gedcom import media_path
 from geneanet_drift.gramps import (
@@ -242,13 +242,11 @@ class _Planner:
 
     def plan(self, change: Change, value) -> None:
         field = change.field
-        if change.kind == MISSING_IN_HIS:
-            self.skip(change, "only in Gramps; nothing is deleted")
-        elif change.waiting_on is not None:
-            self.skip(change, "waiting for a match to be chosen")
+        if (reason := skip_reason(change)) is not None:
+            self.skip(change, reason)
         elif field == "person":
             self.new_person(change, value)
-        elif field.startswith("link:"):
+        elif field.startswith(LINK_PREFIX):
             self.link(change, value)
         elif self.handle_of(change) is None:
             self.skip(change, "his person is not linked to a Gramps person")
@@ -809,7 +807,7 @@ def build_plan(
             planner.new_handles[change.person] = handle
             planner.rank[handle] = len(planner.rank)
             planner.sex[handle] = bundle["gender"]
-        elif change.field.startswith("link:"):
+        elif change.field.startswith(LINK_PREFIX):
             planner.linked[change.person] = bundle["handle"]
     for change, value in chosen:
         planner.plan(change, value)
