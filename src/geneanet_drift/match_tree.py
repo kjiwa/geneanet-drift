@@ -19,6 +19,7 @@ NEW = "new"
 ROLES = ("parents", "spouses", "children")
 CONTRADICTING_ROLES = ("parents", "spouses")
 CHOSEN_WHY = "chosen by you"
+REFUSED_WHY = "none of the Gramps candidates, chosen by you"
 RELATIVE_WHY = "relative of a matched person"
 MIRRORED_ROLES = {"parents": "children", "spouses": "spouses", "children": "parents"}
 
@@ -240,10 +241,20 @@ def match_people(
     source: str,
     negatives: set[tuple[str, str]],
     chosen: dict[int, str] | None = None,
+    refused: frozenset[int] = frozenset(),
 ) -> dict[int, Match]:
-    chosen = {k: h for k, h in (chosen or {}).items() if k in people}
-    matched = _seed(_crosswalk(people, tree, source, negatives), chosen)
-    pools = _pools(people, tree, negatives, matched)
+    chosen = {
+        k: h for k, h in (chosen or {}).items() if k in people and k not in refused
+    }
+    crosswalk = {
+        k: v
+        for k, v in _crosswalk(people, tree, source, negatives).items()
+        if k not in refused
+    }
+    matched = _seed(crosswalk, chosen)
+    pools = _pools(
+        {k: p for k, p in people.items() if k not in refused}, tree, negatives, matched
+    )
     relatives = _gramps_relatives(tree)
     graph = {key: _his_relatives(p) for key, p in people.items()}
     while found := _round(pools, matched, relatives, graph):
@@ -251,7 +262,9 @@ def match_people(
     taken = {handle for handle, _ in matched.values()}
     kin = _Kin(tree, relatives, negatives, taken)
     return {
-        key: _final(people[key], matched, pools.get(key, ()), graph[key], kin)
+        key: Match(NEW, why=REFUSED_WHY)
+        if key in refused
+        else _final(people[key], matched, pools.get(key, ()), graph[key], kin)
         for key in people
     }
 

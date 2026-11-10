@@ -14,7 +14,9 @@ from geneanet_drift.config import Config, ConfigError
 from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
+    NONE_PREFIX,
     PLACE_PREFIX,
+    REJECTED,
     Decision,
     DecisionError,
     load_decisions,
@@ -43,6 +45,7 @@ STATIC_FILES = ("app.js", "app.css", "tokens.css", "ui.css")
 TOKEN_HEADER = "X-Review-Token"
 TOKEN_PLACEHOLDER = "__REVIEW_TOKEN__"
 PENDING = "pending"
+NO_MATCH = "none"
 MAX_BODY = 64 * 1024
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; script-src 'self'; "
@@ -128,18 +131,31 @@ class App:
 
     def link(self, body: dict) -> dict:
         person, chosen = body.get("person"), body.get("change")
+        refusal = f"{NONE_PREFIX}{person}"
         with self.lock:
             decisions = self.decisions()
+            offered = {k: d for k, d in decisions.items() if k != refusal}
             siblings = [
-                c.id for c in link_changes(self.review, decisions) if c.person == person
+                c.id for c in link_changes(self.review, offered) if c.person == person
             ]
-            if not siblings or (chosen is not None and chosen not in siblings):
+            known = isinstance(person, int) and person in self.review.people
+            if not known or not self._link_allowed(
+                chosen, siblings, refusal in decisions
+            ):
                 raise RequestError(HTTPStatus.NOT_FOUND, "unknown match")
-            decisions = {k: d for k, d in decisions.items() if k not in siblings}
-            if chosen is not None:
+            decisions = {k: d for k, d in offered.items() if k not in siblings}
+            if chosen == NO_MATCH:
+                decisions[refusal] = Decision(REJECTED)
+            elif chosen is not None:
                 decisions[chosen] = Decision(ACCEPTED)
             save_decisions(self.decisions_path, decisions)
         return {"ok": True}
+
+    @staticmethod
+    def _link_allowed(chosen, siblings: list[str], refused: bool) -> bool:
+        if chosen is None:
+            return bool(siblings) or refused
+        return bool(siblings) and (chosen == NO_MATCH or chosen in siblings)
 
     def places(self) -> dict:
         return {"places": place_view(self.review, self.decisions())}

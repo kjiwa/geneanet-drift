@@ -11,6 +11,7 @@ EDITED = "edited"
 STATUSES = (ACCEPTED, REJECTED, EDITED)
 LINK_PREFIX = "link:"
 PLACE_PREFIX = "place:"
+NONE_PREFIX = "none:"
 
 
 class DecisionError(ValueError):
@@ -64,3 +65,14 @@ def link_negatives(
         for c in changes
         if c.field.startswith(LINK_PREFIX) and decisions.get(c.id) == Decision(REJECTED)
     }
+
+
+def refused_people(decisions: dict[str, Decision]) -> frozenset[int]:
+    """Keys of his people the operator said match nobody in Gramps."""
+    return frozenset(
+        int(key.removeprefix(NONE_PREFIX))
+        for key, d in decisions.items()
+        if key.startswith(NONE_PREFIX)
+        and d == Decision(REJECTED)
+        and key.removeprefix(NONE_PREFIX).isdigit()
+    )

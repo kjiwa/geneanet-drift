@@ -10,9 +10,11 @@ from geneanet_drift.config import Config, ConfigError
 from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
+    NONE_PREFIX,
     REJECTED,
     Decision,
     load_decisions,
+    save_decisions,
 )
 from geneanet_drift.gramps import GrampsPlace
 from geneanet_drift.review_data import Review, derive, people_view
@@ -543,3 +545,57 @@ def test_a_row_shows_the_place_chosen_for_his_text(served):
     client.json("POST", "/api/places", {"text": "Lyon", "handle": "pl1"})
     after, same_id = birth_place()
     assert (after, same_id) == ("Lyon, Rhone, France", change_id)
+
+
+def test_none_of_these_refuses_the_person_and_can_be_undone(served):
+    client, cfg, _ = served
+    status, _ = client.json("POST", "/api/link", {"person": 3, "change": "none"})
+    assert status == 200
+    assert load_decisions(cfg.decisions_path) == {
+        f"{NONE_PREFIX}3": Decision("rejected")
+    }
+    wren = people_by_name(client)["Wren Calloway"]
+    assert (wren["state"], wren["refused"], wren["candidates"]) == ("new", True, [])
+    status, _ = client.json("POST", "/api/link", {"person": 3, "change": None})
+    assert status == 200
+    assert load_decisions(cfg.decisions_path) == {}
+    wren = people_by_name(client)["Wren Calloway"]
+    assert (wren["state"], wren["refused"], len(wren["candidates"])) == (
+        "needs_match",
+        False,
+        2,
+    )
+
+
+def test_none_of_these_is_refused_for_a_person_with_no_candidates(served):
+    client, cfg, _ = served
+    status, _ = client.json("POST", "/api/link", {"person": 1, "change": "none"})
+    assert status == 404
+    assert not cfg.decisions_path.exists()
+
+
+def test_link_refuses_a_person_who_is_not_in_his_tree(served):
+    client, cfg, _ = served
+    save_decisions(cfg.decisions_path, {f"{NONE_PREFIX}999": Decision("rejected")})
+    for body in ({"person": 999, "change": None}, {"person": "3", "change": "none"}):
+        status, _ = client.json("POST", "/api/link", body)
+        assert status == 404
+    assert load_decisions(cfg.decisions_path) == {
+        f"{NONE_PREFIX}999": Decision("rejected")
+    }
+
+
+def test_choosing_after_refusing_replaces_the_refusal(tmp_path):
+    app = App(synthetic_review(None), tmp_path / "decisions.json")
+    first = people_view(app.review, {})[2]["candidates"][0]["change"]
+    save_decisions(app.decisions_path, {f"{NONE_PREFIX}3": Decision("rejected")})
+    app.link({"person": 3, "change": first})
+    assert app.decisions() == {first: Decision(ACCEPTED)}
+
+
+def test_none_replaces_earlier_choices_of_that_person(tmp_path):
+    app = App(synthetic_review(None), tmp_path / "decisions.json")
+    first = people_view(app.review, {})[2]["candidates"][0]["change"]
+    app.link({"person": 3, "change": first})
+    app.link({"person": 3, "change": "none"})
+    assert app.decisions() == {f"{NONE_PREFIX}3": Decision("rejected")}
