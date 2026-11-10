@@ -404,6 +404,52 @@ def test_union_differs_when_a_child_is_missing_and_keeps_mine():
     assert change.mine["children"] == ["Ada Ashby"]
 
 
+UNKNOWN = 99
+
+
+def test_unknown_spouse_union_pairs_with_the_sole_parent_family():
+    kid = gramps("g5", "Wren", "Ashby")
+    person = his(1, "Rowan", "Ashby", unions=(his_union(7, UNKNOWN, children=[3]),))
+    changes = diff_one(
+        person,
+        gramps("g1", "Rowan", "Ashby", families=("f1",)),
+        extra_people=(his(3, "Wren", "Ashby"),),
+        extra_mine=(kid,),
+        families=(family("f1", "g1", None, children=["g5"]),),
+        matches={1: LINK, 3: Match(LINKED, "g5")},
+    )
+    assert not [c for c in changes if c.field.startswith("union:")]
+
+
+def test_unknown_spouse_union_with_a_new_child_differs_and_keeps_the_family_children():
+    kid = gramps("g5", "Ada", "Ashby")
+    union = his_union(7, UNKNOWN, children=[3])
+    changes = union_case(union, [family("f1", "g1", None, children=["g5"])], [kid])
+    change = only(changes, "union:7")
+    assert change.kind == DIFFERS
+    assert change.proposed["children"] == [{"key": 3}, {"handle": "g5"}]
+    assert not [c for c in changes if c.field.startswith("union:F-")]
+
+
+def test_unknown_spouse_union_does_not_pair_with_a_family_with_a_second_partner():
+    union = his_union(7, UNKNOWN)
+    changes = union_case(union, [family("f1", "g1", "g2")])
+    assert fields(changes) == {("union:7", NEW_VALUE), ("union:F-f1", MISSING_IN_HIS)}
+
+
+def test_unknown_spouse_unions_claim_each_sole_parent_family_once():
+    unions = (his_union(7, UNKNOWN), his_union(8, UNKNOWN))
+    person = his(1, "Rowan", "Ashby", unions=unions)
+    mine = gramps("g1", "Rowan", "Ashby", families=("f1", "f2"))
+    changes = diff_one(
+        person,
+        mine,
+        families=(family("f1", "g1"), family("f2", None, "g1")),
+        matches={1: LINK},
+    )
+    assert not [c for c in changes if c.field.startswith("union:")]
+
+
 def test_matching_union_is_unchanged_and_an_unlisted_family_is_missing_in_his():
     union = his_union(7, 2, date=his_date(1979))
     marriage = gramps_event("Marriage", 1979)
