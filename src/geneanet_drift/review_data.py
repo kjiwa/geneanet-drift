@@ -12,6 +12,7 @@ from geneanet_drift.decisions import (
     PLACE_PREFIX,
     Decision,
     link_negatives,
+    refused_people,
 )
 from geneanet_drift.diff import (
     DIFFERS,
@@ -122,16 +123,17 @@ def derive(review: Review, decisions: dict[str, Decision]) -> Derived:
     chosen: dict[int, str] = {}
     places = place_mapping(review, decisions)
     negatives = set(review.negatives)
+    refused = refused_people(decisions)
     passes = len(review.people) * (len(review.tree.people) + 1) + 2
     for _ in range(passes):
         matches = match_people(
-            review.people, review.tree, review.source, negatives, chosen
+            review.people, review.tree, review.source, negatives, chosen, refused
         )
         changes = diff_people(review.people, review.tree, matches, places)
         found = {**_accepted_links(changes, decisions), **chosen}
         rejected = negatives | link_negatives(changes, decisions)
         if found == chosen and rejected == negatives:
-            stable = _stable_candidates(review, negatives, chosen, matches)
+            stable = _stable_candidates(review, negatives, chosen, refused, matches)
             if stable is not matches:
                 changes = diff_people(review.people, review.tree, stable, places)
             return Derived(stable, changes)
@@ -143,6 +145,7 @@ def _stable_candidates(
     review: Review,
     negatives: set[tuple[str, str]],
     chosen: dict[int, str],
+    refused: frozenset[int],
     matches: dict[int, Match],
 ) -> dict[int, Match]:
     """Offer a chosen person the candidates seen before any choice, plus the choice.
@@ -151,7 +154,9 @@ def _stable_candidates(
     """
     if not chosen:
         return matches
-    baseline = match_people(review.people, review.tree, review.source, negatives)
+    baseline = match_people(
+        review.people, review.tree, review.source, negatives, refused=refused
+    )
     return {
         key: replace(
             match,
@@ -504,6 +509,7 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
         target.setdefault(change.person, []).append(change)
     mine_by_handle = {p.handle: p for p in review.tree.people}
     places = place_mapping(review, decisions)
+    refused = refused_people(decisions)
     result = []
     for key, person in sorted(review.people.items()):
         rows = [
@@ -528,6 +534,7 @@ def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
                     "url": _mine_url(review, found),
                 },
                 "why": match.why,
+                "refused": key in refused,
                 "changes": rows,
                 "candidates": [
                     _candidate_view(

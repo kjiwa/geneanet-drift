@@ -48,6 +48,12 @@ function flash(message) {
   node.hidden = !message;
 }
 
+function setNotice(parts) {
+  const node = document.getElementById("notice");
+  node.replaceChildren(...(parts || []));
+  node.hidden = !parts;
+}
+
 /* Theme */
 
 function applyTheme(choice) {
@@ -119,17 +125,21 @@ function skeletonPerson() {
 
 /* Decisions */
 
-async function mutate(path, body) {
+async function mutate(path, body, after = {}) {
   const focused = document.activeElement && document.activeElement.dataset.focus;
+  const before = state.data;
+  let saved = false;
   try {
     flash("");
     await api(path, body);
     state.data = await api("/api/changes");
     if (routePlaces()) state.places = (await api("/api/places")).places;
+    saved = true;
   } catch (error) {
     flash(error.message);
   }
-  render({ keepFocus: focused });
+  setNotice(saved && after.notice ? after.notice(before, state.data) : null);
+  render({ keepFocus: saved && after.focus ? after.focus() : focused });
 }
 
 function decide(row, status) {
@@ -153,8 +163,41 @@ function saveEdit(row, value) {
     });
 }
 
+const NO_MATCH = "none";
+
+function visibleNeedsMatch() {
+  return state.data.people.filter((p) => p.state === "needs_match" && isShown(p));
+}
+
+function stillNeedMatch(count) {
+  if (count === 0) return "No one still needs a match.";
+  return count === 1 ? "1 person still needs a match." : `${count} people still need a match.`;
+}
+
+function matchNotice(person, change, before, after) {
+  const left = after.summary.needs_match;
+  const resolved = Math.max(0, before.summary.needs_match - left - 1);
+  const candidate = person.candidates.find((c) => c.change === change);
+  const done = change === NO_MATCH
+    ? `Marked "${person.name}" as new.`
+    : `Matched "${person.name}" to "${candidate.name}" (Gramps ID ${candidate.gramps_id}).`;
+  const cascade = resolved ? ` ${plural(resolved, "more person no longer needs", "more people no longer need")} a match.` : "";
+  return [`${done} ${stillNeedMatch(left)}${cascade} `, h("a", { href: `#/person/${person.key}`, text: "Review or undo" })];
+}
+
+function nextChoiceFocus(index) {
+  const next = visibleNeedsMatch()[index];
+  if (!next) return `group:${GROUPS[0].state}`;
+  return next.candidates.length ? `${next.candidates[0].change}:link` : `${next.key}:none`;
+}
+
 function chooseLink(person, change) {
-  return mutate("/api/link", { person: person.key, change });
+  const onList = routePerson() === null && !routePlaces();
+  const index = visibleNeedsMatch().findIndex((p) => p.key === person.key);
+  const after = onList && change !== null
+    ? { notice: (before, now) => matchNotice(person, change, before, now), focus: () => nextChoiceFocus(index) }
+    : {};
+  return mutate("/api/link", { person: person.key, change }, after);
 }
 
 /* List view */
@@ -183,7 +226,8 @@ function personMeta(person) {
 
 function personItem(person) {
   return h("li", {}, h("a", { class: "person-link", href: `#/person/${person.key}` },
-    h("span", { text: person.name }), h("span", { class: "meta", text: personMeta(person) })));
+    h("span", { text: person.name }), h("span", { class: "meta", text: personMeta(person) })),
+  person.state === "needs_match" ? matchChoices(person) : null);
 }
 
 function matchesQuery(person) {
@@ -196,15 +240,19 @@ function finished(person) {
   return (person.state === "new" || person.state === "differs") && person.actionable > 0 && person.decided >= person.actionable;
 }
 
+function isShown(person) {
+  return matchesQuery(person) && !(state.hideDone && finished(person));
+}
+
 function groupSection(group, people) {
-  const shown = people.filter((p) => matchesQuery(p) && !(state.hideDone && finished(p)));
+  const shown = people.filter(isShown);
   const count = shown.length !== people.length ? `${shown.length} of ${plural(people.length, "person", "people")}` : plural(people.length, "person", "people");
   const open = group.state in state.open ? state.open[group.state] : group.state !== "unchanged" && people.length > 0;
   const body = shown.length
     ? h("ul", { class: "people" }, ...shown.map(personItem))
     : h("p", { class: "muted", text: people.length ? "No one here matches the search or has changes left to decide." : group.empty });
   return h("details", { class: "group", open: open, ontoggle: (event) => { state.open[group.state] = event.target.open; } },
-    h("summary", { text: `${group.title} (${count})` }), body);
+    h("summary", { "data-focus": `group:${group.state}`, text: `${group.title} (${count})` }), body);
 }
 
 function groupSections() {
@@ -342,16 +390,37 @@ function openLink(url, text) {
 function candidateItem(person, candidate) {
   const chosen = candidate.decision && candidate.decision.status === "accepted";
   const label = [candidate.name, `(${candidate.gramps_id})`, candidate.years].filter(Boolean).join(" ");
+  const text = chosen ? "Chosen. Undo" : "Use this person";
   return h("li", {}, h("span", { text: label }),
     h("span", { class: "actions" }, openLink(candidate.mine_url, "Open in Gramps"),
-    chosen
-      ? h("button", { class: "button", type: "button", "aria-pressed": "true", "data-focus": `${candidate.change}:link`,
-          text: "Chosen. Undo", onclick: () => chooseLink(person, null) })
-      : h("button", { class: "button", type: "button", "aria-pressed": "false", "data-focus": `${candidate.change}:link`,
-          text: "Use this person", onclick: () => chooseLink(person, candidate.change) })));
+      h("button", { class: "button", type: "button", "aria-pressed": chosen ? "true" : "false",
+        "aria-label": `${text}: ${candidate.name} (${candidate.gramps_id}) for "${person.name}"`,
+        "data-focus": `${candidate.change}:link`, text,
+        onclick: () => chooseLink(person, chosen ? null : candidate.change) })));
+}
+
+function noneButton(person) {
+  return h("button", { class: "button", type: "button", "data-focus": `${person.key}:none`,
+    "aria-label": `None of these is the same person as "${person.name}"`,
+    text: "None of these is the same person", onclick: () => chooseLink(person, NO_MATCH) });
+}
+
+function matchChoices(person) {
+  return h("div", { class: "choices" },
+    h("ul", { class: "candidates" }, ...person.candidates.map((c) => candidateItem(person, c))),
+    person.state === "needs_match" ? noneButton(person) : null);
+}
+
+function refusedSection(person) {
+  return h("section", { "aria-labelledby": "match-title" },
+    h("h2", { id: "match-title", text: "Matching person in Gramps" }),
+    h("p", { class: "muted", text: "You said none of the Gramps people is this person." }),
+    h("button", { class: "button", type: "button", "data-focus": `${person.key}:none`, text: "Undo",
+      onclick: () => chooseLink(person, null) }));
 }
 
 function matchSection(person) {
+  if (person.refused) return refusedSection(person);
   if (person.candidates.length === 0) return null;
   const note = person.state === "needs_match"
     ? "Names match but nothing confirms it. Choose the one that is the same person."
@@ -359,7 +428,7 @@ function matchSection(person) {
   return h("section", { "aria-labelledby": "match-title" },
     h("h2", { id: "match-title", text: "Matching person in Gramps" }),
     h("p", { class: "muted", text: note }),
-    h("ul", { class: "candidates" }, ...person.candidates.map((c) => candidateItem(person, c))));
+    matchChoices(person));
 }
 
 function personSummary(person) {
@@ -532,7 +601,11 @@ async function start() {
   initTheme();
   document.getElementById("apply").addEventListener("click", openPlan);
   document.getElementById("plan-close").addEventListener("click", () => document.getElementById("plan").close());
-  window.addEventListener("hashchange", () => (routePlaces() ? loadPlaces() : render({ moveFocus: true })));
+  window.addEventListener("hashchange", () => {
+    setNotice(null);
+    if (routePlaces()) loadPlaces();
+    else render({ moveFocus: true });
+  });
   render();
   try {
     state.data = await api("/api/changes");

@@ -1,4 +1,10 @@
-from geneanet_drift.match_tree import CANDIDATES, LINKED, NEW, match_people
+from geneanet_drift.match_tree import (
+    CANDIDATES,
+    LINKED,
+    NEW,
+    REFUSED_WHY,
+    match_people,
+)
 from tests.builders import (
     SOURCE,
     crosswalk,
@@ -14,8 +20,10 @@ from tests.builders import (
 )
 
 
-def match(people, gramps_tree, negatives=frozenset()):
-    return match_people(his_people(*people), gramps_tree, SOURCE, set(negatives))
+def match(people, gramps_tree, negatives=frozenset(), refused=frozenset()):
+    return match_people(
+        his_people(*people), gramps_tree, SOURCE, set(negatives), refused=refused
+    )
 
 
 def test_citation_under_the_geneanet_source_links_by_display_name():
@@ -378,3 +386,62 @@ def test_a_relative_candidate_must_have_a_compatible_sex():
     )
     result = chosen_match(linked_child_people(), gramps_tree, {2: "ka"})
     assert result[1].kind == NEW
+
+
+def namesake_trees():
+    people = [his(1, "Wren", "Calloway"), his(2, "Wren", "Calloway")]
+    mine = tree([gramps("w1", "Wren", "Calloway"), gramps("w2", "Wren", "Calloway")])
+    return people, mine
+
+
+def test_a_refused_person_is_new_with_no_candidates():
+    people, mine = namesake_trees()
+    result = match(people, mine, refused={1})
+    assert (result[1].kind, result[1].why) == (NEW, REFUSED_WHY)
+    assert result[1].candidates == ()
+
+
+def test_a_refused_namesake_leaves_the_other_its_candidates():
+    people, mine = namesake_trees()
+    result = match(people, mine, refused={1})
+    assert result[2].kind == CANDIDATES
+    assert set(result[2].candidates) == {"w1", "w2"}
+
+
+def test_a_refused_person_is_not_linked_by_a_crosswalk_citation():
+    result = match(
+        [his(1, "Rowan", "Ashby")],
+        tree([gramps("g1", "Rowan", "Ashby", citations=(crosswalk("rowan ashby"),))]),
+        refused={1},
+    )
+    assert result[1].kind == NEW
+
+
+def test_a_refused_person_is_not_seeded_by_a_choice():
+    people, mine = namesake_trees()
+    result = match_people(
+        his_people(*people), mine, SOURCE, set(), {1: "w1"}, frozenset({1})
+    )
+    assert result[1].kind == NEW
+
+
+def test_a_refused_person_gets_no_relative_candidates():
+    mine = tree(
+        [
+            gramps("rb", "Rowan", "Ashby", families=("fr",)),
+            gramps("jk", "Jory", "Pell", parent_families=("fr",)),
+        ],
+        [family("fr", father="rb", children=["jk"])],
+    )
+    people = [
+        his(1, "Rowan", "Ashby", unions=(his_union(1, 9, children=[2]),)),
+        his(2, "Wren", "Vale", parents=(ref(1),)),
+        his(9, "Mara", "Quill"),
+    ]
+    chosen = {1: "rb"}
+    kept = match_people(his_people(*people), mine, SOURCE, set(), chosen)
+    assert kept[2].candidates == ("jk",)
+    refused = match_people(
+        his_people(*people), mine, SOURCE, set(), chosen, frozenset({2})
+    )
+    assert (refused[2].kind, refused[2].candidates) == (NEW, ())

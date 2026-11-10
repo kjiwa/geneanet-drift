@@ -107,7 +107,7 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.people li + li {
+.people > li + li {
   border-top: 1px solid var(--surface-raised);
 }
 
@@ -304,4 +304,19 @@ dialog .field input[type="checkbox"] {
 
 .links:empty {
   display: none;
+}
+
+#notice {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 1;
+}
+
+.choices {
+  padding-bottom: var(--space-3);
+}
+
+.choices > .button {
+  max-width: 100%;
+  margin-top: var(--space-2);
 }

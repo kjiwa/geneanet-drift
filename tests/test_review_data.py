@@ -1,9 +1,9 @@
 import pytest
 
 from geneanet_drift.capture import Address, Media, Note
-from geneanet_drift.decisions import ACCEPTED, EDITED, REJECTED, Decision
+from geneanet_drift.decisions import ACCEPTED, EDITED, NONE_PREFIX, REJECTED, Decision
 from geneanet_drift.gramps import GrampsMedia, GrampsPlace
-from geneanet_drift.match_tree import CANDIDATES, LINKED
+from geneanet_drift.match_tree import CANDIDATES, LINKED, NEW, REFUSED_WHY
 from geneanet_drift.review_data import (
     Review,
     accepted_changes,
@@ -477,3 +477,42 @@ def test_a_place_decision_maps_the_proposed_place_and_ignores_unknown_handles():
         "handle": "p3",
         "title": "Ontario, Canada",
     }
+
+
+def namesake_review():
+    mine = tree([gramps("w1", "Wren", "Calloway"), gramps("w2", "Wren", "Calloway")])
+    return review([his(1, "Wren", "Calloway"), his(2, "Wren", "Calloway")], mine)
+
+
+def test_a_none_decision_makes_that_person_new_and_only_that_person():
+    rev = namesake_review()
+    decisions = {f"{NONE_PREFIX}1": Decision(REJECTED)}
+    matches = derive(rev, decisions).matches
+    assert (matches[1].kind, matches[1].why) == (NEW, REFUSED_WHY)
+    assert matches[2].kind == CANDIDATES
+    assert set(matches[2].candidates) == {"w1", "w2"}
+    view = {p["key"]: p for p in people_view(rev, decisions)}
+    assert (view[1]["state"], view[1]["refused"], view[1]["candidates"]) == (
+        "new",
+        True,
+        [],
+    )
+    assert view[2]["refused"] is False
+    assert len(view[2]["candidates"]) == 2
+
+
+def test_without_the_none_decision_the_candidates_return():
+    view = people_view(namesake_review(), {})
+    assert [(p["refused"], len(p["candidates"])) for p in view] == [
+        (False, 2),
+        (False, 2),
+    ]
+
+
+def test_a_none_decision_holds_while_other_people_are_matched():
+    rev = namesake_review()
+    first = link_to(rev, 2, "I-w1")
+    decisions = {f"{NONE_PREFIX}1": Decision(REJECTED), first.id: Decision(ACCEPTED)}
+    matches = derive(rev, decisions).matches
+    assert matches[1].kind == NEW
+    assert matches[2].handle == "w1"
