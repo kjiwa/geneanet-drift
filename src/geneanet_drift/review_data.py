@@ -1,3 +1,4 @@
+import shlex
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -8,7 +9,6 @@ from geneanet_drift.config import Config
 from geneanet_drift.decisions import (
     ACCEPTED,
     EDITED,
-    LINK_PREFIX,
     PLACE_PREFIX,
     Decision,
     link_negatives,
@@ -16,11 +16,13 @@ from geneanet_drift.decisions import (
 )
 from geneanet_drift.diff import (
     DIFFERS,
+    LINK_PREFIX,
     MISSING_IN_HIS,
     NEW_PERSON,
     NEW_VALUE,
     Change,
     diff_people,
+    skip_reason,
 )
 from geneanet_drift.feed import page_url
 from geneanet_drift.gramps import GrampsFullPerson, GrampsTree
@@ -70,6 +72,7 @@ class Review:
     media_dir: Path | None
     tree_name: str
     gramps_url: str
+    pages: Path
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,7 @@ def load_review(cfg: Config, pages_dir: Path, snapshot: Path) -> Review:
         media if media.is_dir() else None,
         cfg.tree,
         cfg.gramps_url,
+        pages_dir,
     )
 
 
@@ -500,8 +504,9 @@ def _state(rows: list[dict], matched: bool, new: bool) -> str:
     return "differs" if any(not r["informational"] for r in rows) else "unchanged"
 
 
-def people_view(review: Review, decisions: dict[str, Decision]) -> list[dict]:
-    derived = derive(review, decisions)
+def people_view(
+    review: Review, decisions: dict[str, Decision], derived: Derived
+) -> list[dict]:
     by_person: dict[int, list[Change]] = {}
     links: dict[int, list[Change]] = {}
     for change in derived.changes:
@@ -559,12 +564,6 @@ def _accepted(
     ]
 
 
-def accepted_changes(
-    review: Review, decisions: dict[str, Decision]
-) -> list[tuple[Change, Decision]]:
-    return _accepted(derive(review, decisions).changes, decisions)
-
-
 def _verb(change: Change) -> str:
     if change.kind == NEW_PERSON:
         return "Create person"
@@ -573,24 +572,45 @@ def _verb(change: Change) -> str:
     return "Add" if change.kind == NEW_VALUE else "Change"
 
 
-def preview_view(review: Review, decisions: dict[str, Decision]) -> dict:
-    items = []
-    derived = derive(review, decisions)
+def _preview_item(
+    review: Review, change: Change, decision: Decision, matches: dict[int, Match]
+) -> dict:
+    edited = decision.status == EDITED
+    return {
+        "person": display_name(review.people[change.person]),
+        "action": _verb(change),
+        "label": field_label(change.field),
+        "lines": edit_lines(editable_kind(change), decision.value)
+        if edited
+        else _his_lines(review, change, matches),
+        "edited": edited,
+        "sensitive": change.sensitive,
+    }
+
+
+def apply_command(pages: Path, data_dir: Path) -> str:
+    return (
+        f"geneanet-drift --data-dir {shlex.quote(str(data_dir))} "
+        f"apply --pages {shlex.quote(str(pages))}"
+    )
+
+
+def preview_view(
+    review: Review, decisions: dict[str, Decision], derived: Derived
+) -> dict:
+    items, skipped = [], []
     for change, decision in _accepted(derived.changes, decisions):
-        edited = decision.status == EDITED
-        items.append(
-            {
-                "person": display_name(review.people[change.person]),
-                "action": _verb(change),
-                "label": field_label(change.field),
-                "lines": edit_lines(editable_kind(change), decision.value)
-                if edited
-                else _his_lines(review, change, derived.matches),
-                "edited": edited,
-                "sensitive": change.sensitive,
-            }
-        )
-    return {"count": len(items), "items": items}
+        item = _preview_item(review, change, decision, derived.matches)
+        reason = skip_reason(change)
+        if reason is None:
+            items.append(item)
+        else:
+            skipped.append({**item, "reason": reason})
+    return {
+        "count": len(items) + len(skipped),
+        "items": items,
+        "skipped": skipped,
+    }
 
 
 def summary_view(people: list[dict], accepted: int) -> dict:

@@ -88,12 +88,12 @@ a {
 .button[aria-pressed="true"][data-action="reject"] {
   border-color: var(--error);
   background: var(--error);
-  color: var(--surface);
+  color: var(--on-error);
 }
 
 .button:disabled {
   cursor: default;
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 .field {
@@ -131,7 +131,7 @@ a {
   border-color: var(--error);
 }
 
-.field .error {
+.error {
   margin: 0;
   color: var(--error);
   font-size: var(--text-sm);

@@ -2,14 +2,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from geneanet_drift.config import read_json, write_json_atomic
-from geneanet_drift.diff import Change
+from geneanet_drift.diff import LINK_PREFIX, Change
 from geneanet_drift.feed import name_key
 
 ACCEPTED = "accepted"
 REJECTED = "rejected"
 EDITED = "edited"
 STATUSES = (ACCEPTED, REJECTED, EDITED)
-LINK_PREFIX = "link:"
 PLACE_PREFIX = "place:"
 NONE_PREFIX = "none:"
 
@@ -25,7 +24,7 @@ class Decision:
 
     def __post_init__(self):
         if self.status not in STATUSES:
-            raise DecisionError(f"unknown decision status {self.status!r}")
+            raise DecisionError(f'unknown decision status "{self.status}"')
         if (self.status == EDITED) != (self.value is not None):
             raise DecisionError("an edited decision needs a value, others take none")
 
@@ -37,7 +36,7 @@ def load_decisions(path: Path) -> dict[str, Decision]:
             for change_id, row in read_json(path, {}).items()
         }
     except (KeyError, TypeError, AttributeError, ValueError) as error:
-        raise DecisionError(f"{path} is not a decisions file: {error!r}") from error
+        raise DecisionError(f"{path} is not a decisions file: {error}") from error
 
 
 def save_decisions(path: Path, decisions: dict[str, Decision]) -> None:
@@ -48,12 +47,6 @@ def save_decisions(path: Path, decisions: dict[str, Decision]) -> None:
             for change_id, d in sorted(decisions.items())
         },
     )
-
-
-def decide(
-    decisions: dict[str, Decision], change_id: str, decision: Decision
-) -> dict[str, Decision]:
-    return {**decisions, change_id: decision}
 
 
 def link_negatives(

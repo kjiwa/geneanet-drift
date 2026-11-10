@@ -42,6 +42,10 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+dialog h3 {
+  font-size: var(--text-base);
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--column-min)), 1fr));
@@ -251,7 +255,7 @@ dialog {
 }
 
 dialog::backdrop {
-  background: color-mix(in srgb, var(--text) 55%, transparent);
+  background: color-mix(in srgb, var(--text) var(--backdrop-mix), transparent);
 }
 
 .field-check label,
@@ -319,4 +323,12 @@ dialog .field input[type="checkbox"] {
 .choices > .button {
   max-width: 100%;
   margin-top: var(--space-2);
+}
+
+code {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
 }

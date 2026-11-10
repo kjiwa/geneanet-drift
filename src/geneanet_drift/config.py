@@ -16,7 +16,6 @@ class ConfigError(Exception):
 class Config:
     tree: str
     gramps_url: str
-    priority_surnames: tuple[str, ...]
     data_dir: Path
     gramps_user: str | None = None
     gramps_password: str | None = field(default=None, repr=False)
@@ -117,7 +116,6 @@ def load_config(
     return Config(
         tree=raw["tree"],
         gramps_url=gramps_url.rstrip("/"),
-        priority_surnames=tuple(raw.get("priority_surnames", [])),
         data_dir=data_dir,
         gramps_user=env.get("GRAMPS_USER") or raw.get("gramps_user"),
         gramps_password=env.get("GRAMPS_PASSWORD"),

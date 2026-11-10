@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from geneanet_drift.capture import Address, Media, Note
@@ -6,13 +8,14 @@ from geneanet_drift.gramps import GrampsMedia, GrampsPlace
 from geneanet_drift.match_tree import CANDIDATES, LINKED, NEW, REFUSED_WHY
 from geneanet_drift.review_data import (
     Review,
-    accepted_changes,
+    apply_command,
     date_text,
     derive,
     field_changes,
     link_changes,
     people_view,
     place_view,
+    preview_view,
 )
 from tests.builders import (
     SOURCE,
@@ -37,6 +40,7 @@ def review(people, gramps_tree, negatives=frozenset(), gramps_url="http://gramps
         None,
         "example",
         gramps_url,
+        Path("pages"),
     )
 
 
@@ -59,6 +63,10 @@ def twin_review():
         his(9, "Mara", "Quill"),
     ]
     return review(people, mine)
+
+
+def view_of(rev, decisions):
+    return people_view(rev, decisions, derive(rev, decisions))
 
 
 def link_to(rev, person, gramps_id, decisions=None):
@@ -86,7 +94,7 @@ def test_a_chosen_link_row_stays_so_the_choice_can_be_undone():
     decisions = {chosen.id: Decision(ACCEPTED)}
     ids = {c.id for c in link_changes(rev, decisions) if c.person == 1}
     assert chosen.id in ids and len(ids) == 2
-    view = {p["key"]: p for p in people_view(rev, decisions)}
+    view = {p["key"]: p for p in view_of(rev, decisions)}
     assert view[1]["why"] == "chosen by you"
     assert view[1]["mine"]["id"] == "I-pb"
     assert len(view[1]["candidates"]) == 2
@@ -106,7 +114,9 @@ def test_a_choice_cascades_into_field_changes_and_accepted_changes():
     chosen = link_to(rev, 1, "I-pb")
     decisions = {chosen.id: Decision(ACCEPTED)}
     assert not [c for c in link_changes(rev, decisions) if c.person == 2]
-    assert [c.id for c, _ in accepted_changes(rev, decisions)] == [chosen.id]
+    assert [c.id for c in derive(rev, decisions).changes if c.id in decisions] == [
+        chosen.id
+    ]
 
 
 def test_without_decisions_the_ambiguous_pair_stays_unresolved():
@@ -157,9 +167,7 @@ def waiting_review():
 
 
 def rows_of(rev, key, decisions=None):
-    return {
-        r["label"]: r for r in people_view(rev, decisions or {})[key - 1]["changes"]
-    }
+    return {r["label"]: r for r in view_of(rev, decisions or {})[key - 1]["changes"]}
 
 
 def test_a_waiting_row_is_informational_and_names_the_person_to_match():
@@ -230,7 +238,7 @@ def test_a_person_chosen_through_a_relative_keeps_the_choice_as_a_candidate():
     match = derive(rev, decisions).matches[2]
     assert (match.kind, match.handle, match.candidates) == (LINKED, "jk", ("jk",))
     assert link_to(rev, 2, "I-jk", decisions).id == offered.id
-    assert people_view(rev, decisions)[1]["mine"]["id"] == "I-jk"
+    assert view_of(rev, decisions)[1]["mine"]["id"] == "I-jk"
 
 
 def test_conflicting_accepted_links_for_one_person_settle_on_the_first():
@@ -279,7 +287,7 @@ def test_choosing_among_three_candidates_keeps_the_list_at_three():
 
 
 def new_person_lines(rev, key=2):
-    person = next(p for p in people_view(rev, {}) if p["key"] == key)
+    person = next(p for p in view_of(rev, {}) if p["key"] == key)
     return next(r["his"] for r in person["changes"] if r["label"] == "New person")
 
 
@@ -353,7 +361,7 @@ def link_view(gramps_url, address=ADDRESS):
     rev = review(
         [his(1, "Rowan", "Ashby", address=address)], mine, gramps_url=gramps_url
     )
-    return people_view(rev, {})[0]
+    return view_of(rev, {})[0]
 
 
 def test_person_links_point_at_both_trees():
@@ -369,7 +377,7 @@ def test_links_are_omitted_without_an_address_or_gramps_url():
 
 
 def test_candidates_link_to_their_gramps_pages():
-    candidates = people_view(twin_review(), {})[0]["candidates"]
+    candidates = view_of(twin_review(), {})[0]["candidates"]
     assert {c["mine_url"] for c in candidates} == {
         "http://gramps.test/person/I-pa",
         "http://gramps.test/person/I-pb",
@@ -491,7 +499,7 @@ def test_a_none_decision_makes_that_person_new_and_only_that_person():
     assert (matches[1].kind, matches[1].why) == (NEW, REFUSED_WHY)
     assert matches[2].kind == CANDIDATES
     assert set(matches[2].candidates) == {"w1", "w2"}
-    view = {p["key"]: p for p in people_view(rev, decisions)}
+    view = {p["key"]: p for p in view_of(rev, decisions)}
     assert (view[1]["state"], view[1]["refused"], view[1]["candidates"]) == (
         "new",
         True,
@@ -502,7 +510,7 @@ def test_a_none_decision_makes_that_person_new_and_only_that_person():
 
 
 def test_without_the_none_decision_the_candidates_return():
-    view = people_view(namesake_review(), {})
+    view = view_of(namesake_review(), {})
     assert [(p["refused"], len(p["candidates"])) for p in view] == [
         (False, 2),
         (False, 2),
@@ -516,3 +524,21 @@ def test_a_none_decision_holds_while_other_people_are_matched():
     matches = derive(rev, decisions).matches
     assert matches[1].kind == NEW
     assert matches[2].handle == "w1"
+
+
+def test_a_decided_change_that_waits_on_a_match_is_listed_as_not_written():
+    rev = waiting_review()
+    waiting = next(c for c in derive(rev, {}).changes if c.waiting_on)
+    decisions = {waiting.id: Decision(ACCEPTED)}
+    plan = preview_view(rev, decisions, derive(rev, decisions))
+    assert plan["count"] == 1
+    assert plan["items"] == []
+    (skipped,) = plan["skipped"]
+    assert skipped["label"] == "Parent"
+    assert skipped["reason"] == "waiting for a match to be chosen"
+
+
+def test_the_apply_command_quotes_the_data_directory_and_pages():
+    assert apply_command(Path("my pages/it's"), Path("data dir")) == (
+        "geneanet-drift --data-dir 'data dir' apply --pages 'my pages/it'\"'\"'s'"
+    )

@@ -25,7 +25,7 @@
           <option value="dark">Dark</option>
         </select>
       </div>
-      <button id="apply" class="button" type="button" data-variant="primary" aria-haspopup="dialog">Apply 0 accepted changes</button>
+      <button id="apply" class="button" type="button" data-variant="primary" aria-haspopup="dialog">Accepted changes (0)</button>
     </div>
   </header>
   <p id="flash" class="status" data-kind="error" role="alert" hidden></p>
@@ -33,15 +33,10 @@
   <main id="view" tabindex="-1"></main>
 </div>
 <dialog id="plan" aria-labelledby="plan-title">
-  <h2 id="plan-title">Apply accepted changes</h2>
+  <h2 id="plan-title">Accepted changes</h2>
   <div id="plan-body"></div>
-  <div class="field">
-    <label><input id="backup" type="checkbox"> I have exported a backup of the Gramps tree</label>
-  </div>
-  <p id="apply-reason" class="muted">Applying to Gramps is not available in this version. Nothing has been written.</p>
   <div class="actions">
     <button id="plan-close" class="button" type="button">Close</button>
-    <button id="plan-apply" class="button" type="button" data-variant="primary" disabled aria-describedby="apply-reason">Apply to Gramps</button>
   </div>
 </dialog>
 <noscript><p class="status">This page needs JavaScript to show the review.</p></noscript>

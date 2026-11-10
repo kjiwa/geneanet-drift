@@ -3,6 +3,7 @@ import json
 import mimetypes
 import secrets
 import threading
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -22,12 +23,13 @@ from geneanet_drift.decisions import (
     load_decisions,
     save_decisions,
 )
+from geneanet_drift.diff import Change
 from geneanet_drift.review_data import (
     PHOTO_TYPES,
     Review,
+    apply_command,
     derive,
     editable_kind,
-    field_changes,
     his_place_uses,
     is_link,
     link_changes,
@@ -75,8 +77,9 @@ class App:
 
     def changes(self) -> dict:
         decisions = self.decisions()
-        people = people_view(self.review, decisions)
-        accepted = preview_view(self.review, decisions)["count"]
+        derived = derive(self.review, decisions)
+        people = people_view(self.review, decisions, derived)
+        accepted = preview_view(self.review, decisions, derived)["count"]
         return {
             "summary": summary_view(people, accepted),
             "people": people,
@@ -84,7 +87,10 @@ class App:
         }
 
     def preview(self) -> dict:
-        return preview_view(self.review, self.decisions())
+        decisions = self.decisions()
+        plan = preview_view(self.review, decisions, derive(self.review, decisions))
+        command = apply_command(self.review.pages, self.decisions_path.parent)
+        return {**plan, "command": command}
 
     def decide(self, body: dict) -> dict:
         with self.lock:
@@ -106,27 +112,27 @@ class App:
             save_decisions(
                 self.decisions_path,
                 self._apply(
-                    decisions, change_id, body.get("status"), body.get("value")
+                    decisions, changes, change_id, body.get("status"), body.get("value")
                 ),
             )
         return {"ok": True}
 
-    def _apply(self, decisions, change_id, status, value) -> dict[str, Decision]:
+    def _apply(
+        self, decisions, changes, change_id, status, value
+    ) -> dict[str, Decision]:
         kept = {k: d for k, d in decisions.items() if k != change_id}
         if status == PENDING:
             return kept
         try:
             if status == EDITED:
-                value = validate_edit(self._editable(decisions, change_id), value)
+                value = validate_edit(self._editable(changes, change_id), value)
             return {**kept, change_id: Decision(status, value)}
         except (DecisionError, ValueError) as error:
             raise RequestError(HTTPStatus.BAD_REQUEST, str(error)) from error
 
-    def _editable(self, decisions, change_id: str) -> str | None:
-        change = next(
-            (c for c in field_changes(self.review, decisions) if c.id == change_id),
-            None,
-        )
+    @staticmethod
+    def _editable(changes: list[Change], change_id: str) -> str | None:
+        change = next((c for c in changes if c.id == change_id), None)
         return editable_kind(change) if change else None
 
     def link(self, body: dict) -> dict:
@@ -287,6 +293,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(error.status, {"error": str(error)})
         except DecisionError as error:
             message = f"The saved decisions cannot be read: {error}"
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": message})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            message = "The review server failed; see the terminal."
             self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": message})
 
     def do_GET(self):

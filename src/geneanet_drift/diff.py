@@ -27,6 +27,7 @@ EVENT_KINDS = {
     "killed": "killed",
 }
 DATE_PARTS = ("year", "month", "day")
+LINK_PREFIX = "link:"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,14 @@ class Change:
     proposed: object
     sensitive: bool = False
     waiting_on: int | None = None
+
+
+def skip_reason(change: Change) -> str | None:
+    if change.kind == MISSING_IN_HIS:
+        return "only in Gramps; nothing is deleted"
+    if change.waiting_on is not None:
+        return "waiting for a match to be chosen"
+    return None
 
 
 @dataclass(frozen=True)
@@ -491,7 +500,7 @@ def _link_changes(ctx: Context, person: Person, match: Match) -> Iterator[Change
         mine = ctx.mine[handle]
         yield _change(
             person.key,
-            f"link:{mine.gramps_id}",
+            f"{LINK_PREFIX}{mine.gramps_id}",
             NEW_VALUE,
             display_name(person),
             f"{_handle_name(ctx, handle)} [{mine.gramps_id}]",

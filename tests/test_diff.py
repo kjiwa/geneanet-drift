@@ -4,8 +4,10 @@ from geneanet_drift.diff import (
     MISSING_IN_HIS,
     NEW_PERSON,
     NEW_VALUE,
+    Change,
     change_id,
     diff_people,
+    skip_reason,
 )
 from geneanet_drift.gramps import GrampsCitation, GrampsEvent, GrampsMedia, GrampsNote
 from geneanet_drift.match_tree import CANDIDATES, LINKED, NEW, Match, match_people
@@ -610,3 +612,12 @@ def test_a_mapped_place_applies_to_a_new_marriage():
     ]
     assert mapped.proposed["place"] == "Harbor Town"
     assert mapped.id == plain.id
+
+
+def test_skip_reason_names_why_a_change_is_never_written():
+    def row(kind, waiting_on=None):
+        return Change("x", 1, "parent:2", kind, "a", "b", None, False, waiting_on)
+
+    assert skip_reason(row(MISSING_IN_HIS)) == "only in Gramps; nothing is deleted"
+    assert skip_reason(row(DIFFERS, 2)) == "waiting for a match to be chosen"
+    assert skip_reason(row(DIFFERS)) is None

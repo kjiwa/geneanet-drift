@@ -8,6 +8,7 @@
   --accent: #2554c7;
   --on-accent: #ffffff;
   --error: #9b1c1c;
+  --on-error: #ffffff;
   --mark: #ffe9a3;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -26,6 +27,8 @@
   --page-max: 60rem;
   --ring: 2px solid var(--accent);
   --ring-offset: 2px;
+  --disabled-opacity: 0.6;
+  --backdrop-mix: 55%;
 }
 
 :root[data-theme="light"] {
@@ -42,6 +45,7 @@
   --accent: #8db0ff;
   --on-accent: #0f1623;
   --error: #f5a3a3;
+  --on-error: #1b1f27;
   --mark: #5a4a12;
 }
 
@@ -55,6 +59,7 @@
     --accent: #8db0ff;
     --on-accent: #0f1623;
     --error: #f5a3a3;
+    --on-error: #1b1f27;
     --mark: #5a4a12;
   }
 }
