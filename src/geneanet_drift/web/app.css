@@ -254,6 +254,7 @@ dialog::backdrop {
   background: color-mix(in srgb, var(--text) 55%, transparent);
 }
 
+.field-check label,
 dialog .field label {
   display: flex;
   align-items: center;
@@ -261,6 +262,7 @@ dialog .field label {
   min-height: var(--target);
 }
 
+.field-check input[type="checkbox"],
 dialog .field input[type="checkbox"] {
   width: var(--space-5);
   min-height: var(--space-5);
