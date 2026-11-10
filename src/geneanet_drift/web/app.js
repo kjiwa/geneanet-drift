@@ -11,7 +11,7 @@ const STATUS_LABELS = { accepted: "Accepted", rejected: "Rejected", edited: "Edi
 const NOT_REVIEWED = "Not reviewed";
 
 const PLACE_LIST = "place-titles";
-const state = { data: null, places: null, query: "", open: {}, editing: new Set(), errors: {} };
+const state = { data: null, places: null, query: "", hideDone: true, open: {}, editing: new Set(), errors: {} };
 const view = document.getElementById("view");
 
 function h(tag, props = {}, ...kids) {
@@ -192,13 +192,17 @@ function matchesQuery(person) {
   return [person.name, person.mine && person.mine.name].some((name) => name && name.toLowerCase().includes(query));
 }
 
+function finished(person) {
+  return (person.state === "new" || person.state === "differs") && person.actionable > 0 && person.decided >= person.actionable;
+}
+
 function groupSection(group, people) {
-  const shown = people.filter(matchesQuery);
-  const count = state.query.trim() ? `${shown.length} of ${plural(people.length, "person", "people")}` : plural(people.length, "person", "people");
+  const shown = people.filter((p) => matchesQuery(p) && !(state.hideDone && finished(p)));
+  const count = shown.length !== people.length ? `${shown.length} of ${plural(people.length, "person", "people")}` : plural(people.length, "person", "people");
   const open = group.state in state.open ? state.open[group.state] : group.state !== "unchanged" && people.length > 0;
   const body = shown.length
     ? h("ul", { class: "people" }, ...shown.map(personItem))
-    : h("p", { class: "muted", text: people.length ? "No one here matches the search." : group.empty });
+    : h("p", { class: "muted", text: people.length ? "No one here matches the search or has changes left to decide." : group.empty });
   return h("details", { class: "group", open: open, ontoggle: (event) => { state.open[group.state] = event.target.open; } },
     h("summary", { text: `${group.title} (${count})` }), body);
 }
@@ -228,6 +232,15 @@ function searchField() {
   return h("div", { class: "field search" }, h("label", { for: "search", text: "Search people by name" }), input);
 }
 
+function hideDoneField() {
+  return h("div", { class: "field field-check" },
+    h("label", { for: "hide-done" },
+      h("input", { id: "hide-done", type: "checkbox", checked: state.hideDone, onchange: (event) => {
+        state.hideDone = event.target.checked;
+        filterGroups();
+      } }), "Hide people with no changes left to decide"));
+}
+
 function listView() {
   const { summary } = state.data;
   const empty = summary.people === 0
@@ -237,7 +250,7 @@ function listView() {
     h("h1", { tabindex: "-1", text: "Review changes" }),
     summaryStats(summary), empty,
     h("p", { class: "links" }, h("a", { class: "button", href: "#/places", text: "Places" })),
-    searchField(),
+    searchField(), hideDoneField(),
     h("div", { id: "groups" }, ...groupSections()));
 }
 
