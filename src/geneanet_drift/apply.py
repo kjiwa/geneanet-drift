@@ -13,7 +13,14 @@ from geneanet_drift import records
 from geneanet_drift.capture import Person
 from geneanet_drift.config import read_json, write_json_atomic
 from geneanet_drift.decisions import ACCEPTED, EDITED, Decision
-from geneanet_drift.diff import EVENT_KINDS, LINK_PREFIX, NEW_VALUE, Change, skip_reason
+from geneanet_drift.diff import (
+    EVENT_KINDS,
+    LINK_PREFIX,
+    NEW_VALUE,
+    Change,
+    family_partners,
+    skip_reason,
+)
 from geneanet_drift.feed import name_key, tree_url
 from geneanet_drift.gedcom import media_path
 from geneanet_drift.gramps import (
@@ -353,11 +360,7 @@ class _Planner:
     def existing_family(self, partners: list[str]):
         wanted = set(partners)
         return next(
-            (
-                f
-                for f in self.families.values()
-                if {f.father, f.mother} - {None} == wanted
-            ),
+            (f for f in self.families.values() if family_partners(f) == wanted),
             None,
         )
 

@@ -710,6 +710,32 @@ def test_a_new_person_joins_the_parents_existing_family(tmp_path):
     assert paths[f"/api/people/{wren}"].appends == (("parent_family_list", "f1"),)
 
 
+def test_a_union_with_an_unknown_spouse_updates_the_sole_parent_family(tmp_path):
+    plan, _ = small_world(
+        tmp_path,
+        [
+            gramps(
+                "h1",
+                "Ardeth",
+                "Pellow",
+                citations=(crosswalk("Ardeth Pellow"),),
+                families=("f1",),
+            )
+        ],
+        [
+            his(1, "Ardeth", "Pellow", unions=(his_union(7, 99, children=[3]),)),
+            his(3, "Wren", "Pellow", parents=(ref(1),)),
+        ],
+        [family("f1", "h1", "")],
+    )
+    assert not [
+        s
+        for s in plan.steps
+        if s.method == "POST" and any(o["_class"] == "Family" for o in s.body)
+    ]
+    assert "/api/families/f1" in {s.path for s in plan.steps}
+
+
 def test_scalar_differences_patch_the_person_with_evidence(tmp_path):
     plan, _ = small_world(
         tmp_path,

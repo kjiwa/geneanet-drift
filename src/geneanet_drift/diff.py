@@ -367,13 +367,25 @@ def _spouse_handle(ctx: Context, union: Union) -> str | None:
     return ctx.matches[union.spouse.key].handle if _real(ctx, union.spouse) else None
 
 
-def _family_for(ctx: Context, union: Union, mine: GrampsFullPerson, claimed: set[str]):
+def family_partners(family: GrampsFamily) -> set[str]:
+    """Parents with a handle; Gramps leaves an absent parent as an empty string."""
+    return {p for p in (family.father, family.mother) if p}
+
+
+def _is_partner(ctx: Context, union: Union, mine: GrampsFullPerson, f) -> bool:
+    """His unknown spouse pairs with a family the person alone heads."""
     handle = _spouse_handle(ctx, union)
+    if handle is None:
+        return not _real(ctx, union.spouse) and family_partners(f) == {mine.handle}
+    return handle in family_partners(f)
+
+
+def _family_for(ctx: Context, union: Union, mine: GrampsFullPerson, claimed: set[str]):
     return next(
         (
             f
             for f in (ctx.families[h] for h in mine.families)
-            if handle and handle in (f.father, f.mother) and f.handle not in claimed
+            if f.handle not in claimed and _is_partner(ctx, union, mine, f)
         ),
         None,
     )
@@ -405,9 +417,7 @@ def _union_view(ctx: Context, union: Union) -> dict:
 
 
 def _family_view(ctx: Context, family: GrampsFamily, handle: str) -> dict:
-    spouse = next(
-        (p for p in (family.father, family.mother) if p not in (handle, None)), None
-    )
+    spouse = next((p for p in sorted(family_partners(family)) if p != handle), None)
     return {
         "spouse": _handle_name(ctx, spouse) if spouse else None,
         **_marriage(family),
