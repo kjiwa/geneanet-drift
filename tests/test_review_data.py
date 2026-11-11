@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ def review(people, gramps_tree, negatives=frozenset(), gramps_url="http://gramps
         gramps_tree,
         SOURCE,
         frozenset(negatives),
+        None,
         None,
         "example",
         gramps_url,
@@ -353,6 +355,69 @@ def test_a_photo_row_says_when_gramps_holds_none():
     assert media_row(())["mine"] == ["No photos in Gramps."]
 
 
+def test_the_change_id_of_a_photo_row_ignores_what_gramps_holds():
+    held = (GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),)
+    assert media_row(held)["id"] == media_row(())["id"]
+
+
+def photo_review(tmp_path, held, present):
+    person = his(
+        1, "Rowan", "Ashby", media=(Media(1, "Harvest", None, "o", "t", False),)
+    )
+    mine = tree(
+        [
+            gramps(
+                "g1",
+                "Rowan",
+                "Ashby",
+                media=held,
+                citations=(crosswalk("Rowan Ashby"),),
+            )
+        ]
+    )
+    folder = tmp_path / "thumbnails"
+    folder.mkdir()
+    for handle in present:
+        (folder / f"{handle}.jpg").write_bytes(b"\xff\xd8")
+    return replace(review([person], mine), thumbnails_dir=folder)
+
+
+def test_a_photo_row_lists_only_the_gramps_thumbnails_that_were_saved(tmp_path):
+    held = (
+        GrampsMedia("m1", "Wedding portrait", "a.jpg", "image/jpeg"),
+        GrampsMedia("m2", "Letter", "b.png", "image/png"),
+    )
+    found = photo_review(tmp_path, held, present=["m2"])
+    row = rows_of(found, 1)["Photo or document"]
+    assert row["mine_photos"] == [{"url": "/thumbnails/m2.jpg", "alt": "Letter"}]
+    assert row["mine"] == ["Already in Gramps: Wedding portrait, Letter"]
+
+
+def test_other_rows_carry_no_gramps_thumbnails(tmp_path):
+    found = photo_review(tmp_path, (), present=[])
+    assert all(
+        r["mine_photos"] == []
+        for label, r in rows_of(found, 1).items()
+        if label != "Photo or document"
+    )
+
+
+def test_a_media_folder_made_after_loading_is_read_and_counted(tmp_path):
+    found = replace(
+        photo_review(tmp_path, (), present=[]), media_dir=tmp_path / "media"
+    )
+    first = view_of(found, {})[0]
+    assert first["photos_missing"] == 1
+    assert rows_of(found, 1)["Photo or document"]["photo_missing"] is True
+    folder = tmp_path / "media" / "person-1"
+    folder.mkdir(parents=True)
+    (folder / "1-Harvest.jpg").write_bytes(b"\xff\xd8")
+    later = view_of(found, {})[0]
+    assert later["photos_missing"] == 0
+    row = rows_of(found, 1)["Photo or document"]
+    assert (row["photo"], row["photo_missing"]) == ("/media/1/1-Harvest.jpg", False)
+
+
 ADDRESS = Address("ashby", "rowan", 0)
 
 
@@ -542,3 +607,29 @@ def test_the_apply_command_quotes_the_data_directory_and_pages():
     assert apply_command(Path("my pages/it's"), Path("data dir")) == (
         "geneanet-drift --data-dir 'data dir' apply --pages 'my pages/it'\"'\"'s'"
     )
+
+
+def test_load_review_names_the_media_and_thumbnail_folders_before_they_exist(
+    cfg, tmp_path
+):
+    from geneanet_drift.review_data import load_review
+    from geneanet_drift.tree_file import write_tree
+
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    snapshot = tmp_path / "snap" / "tree.json"
+    snapshot.parent.mkdir()
+    write_tree(snapshot, tree([]))
+    loaded = load_review(cfg, pages, snapshot)
+    assert loaded.media_dir == tmp_path / "media"
+    assert loaded.thumbnails_dir == snapshot.parent / "thumbnails"
+
+
+def test_a_decided_photo_row_is_not_counted_as_a_photo_to_save(tmp_path):
+    found = replace(
+        photo_review(tmp_path, (), present=[]), media_dir=tmp_path / "media"
+    )
+    row = rows_of(found, 1)["Photo or document"]
+    decided = {row["id"]: Decision(REJECTED)}
+    assert view_of(found, {})[0]["photos_missing"] == 1
+    assert view_of(found, decided)[0]["photos_missing"] == 0

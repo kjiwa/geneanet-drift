@@ -126,6 +126,34 @@ dialog h3 {
   min-height: var(--target);
 }
 
+.person-nav {
+  margin: var(--space-3) 0;
+}
+
+.person-nav p {
+  margin: 0;
+}
+
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.nav-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--target);
+  overflow-wrap: anywhere;
+}
+
+.nav-slot[data-slot="next"] {
+  margin-left: auto;
+  text-align: right;
+}
+
 .row {
   margin: var(--space-4) 0;
   padding: var(--space-3);
@@ -193,6 +221,12 @@ mark {
   margin-top: var(--space-2);
   border-radius: var(--radius);
   object-fit: cover;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .row .actions {

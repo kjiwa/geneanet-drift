@@ -344,3 +344,53 @@ def test_place_title_skips_unnamed_places():
         "c": {"name": {"value": "C"}},
     }
     assert _place_title("a", places) == "A, C"
+
+
+class Thumbnails:
+    """Answers thumbnail requests with JPEG bytes, or 404 for the handles in `missing`."""
+
+    def __init__(self, fake_gramps, missing=()):
+        self.fake = fake_gramps
+        self.missing = set(missing)
+        self.paths: list[str] = []
+
+    def __call__(self, method, url, headers, body):
+        path = url.removeprefix(BASE_URL)
+        if "/thumbnail/" not in path:
+            return self.fake(method, url, headers, body)
+        self.paths.append(path)
+        if path.split("/")[3] in self.missing:
+            return 404, {}, b"{}"
+        return 200, {}, b"\xff\xd8" + path.encode()
+
+
+def media_tree():
+    from tests.builders import gramps as holder
+    from tests.builders import tree as make_tree
+
+    shared = (
+        gramps.GrampsMedia("m1", "Portrait", "a.jpg", "image/jpeg"),
+        gramps.GrampsMedia("m2", "Letter", "b.pdf", "application/pdf"),
+        gramps.GrampsMedia("m3", "Gone", "c.png", "image/png"),
+    )
+    return make_tree(
+        [
+            holder("p1", "Rowan", "Ashby", media=shared[:2]),
+            holder("p2", "Ivy", "Marlowe", media=(shared[0], shared[2])),
+        ]
+    )
+
+
+def test_thumbnails_are_fetched_once_per_image_and_survive_a_404(fake_gramps, tmp_path):
+    transport = Thumbnails(fake_gramps, missing={"m3"})
+    saved, failed = gramps.save_thumbnails(
+        make_client(transport), media_tree(), tmp_path
+    )
+    assert (saved, failed) == (1, 1)
+    assert sorted(transport.paths) == [
+        "/api/media/m1/thumbnail/256",
+        "/api/media/m3/thumbnail/256",
+    ]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["m1.jpg"]
+    assert (tmp_path / "m1.jpg").stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / "m1.jpg").read_bytes().startswith(b"\xff\xd8")

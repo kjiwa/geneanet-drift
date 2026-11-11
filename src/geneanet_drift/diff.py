@@ -278,7 +278,9 @@ def _media_title(media: GrampsMedia) -> str:
 
 
 def _media_changes(person: Person, mine: GrampsFullPerson):
-    existing = {"existing": [_media_title(m) for m in mine.media]}
+    existing = {
+        "existing": [{"title": _media_title(m), "handle": m.handle} for m in mine.media]
+    }
     known = {normalise(m.description) for m in mine.media}
     for media in person.media:
         if not media.title or normalise(media.title) not in known:

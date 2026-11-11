@@ -36,7 +36,7 @@ from geneanet_drift.match_tree import (
     gramps_year,
     match_people,
 )
-from geneanet_drift.tree_file import read_tree
+from geneanet_drift.tree_file import THUMBNAILS_DIR, read_tree
 
 TEXT, NOTE, FACT = "text", "note", "fact"
 TEXT_FIELDS = ("given", "surname", "occupation", "other_name")
@@ -70,6 +70,7 @@ class Review:
     source: str
     negatives: frozenset[tuple[str, str]]
     media_dir: Path | None
+    thumbnails_dir: Path | None
     tree_name: str
     gramps_url: str
     pages: Path
@@ -82,13 +83,13 @@ class Derived:
 
 
 def load_review(cfg: Config, pages_dir: Path, snapshot: Path) -> Review:
-    media = pages_dir.parent / "media"
     return Review(
         load_tree(pages_dir, cfg.tree),
         read_tree(snapshot),
         source_title(cfg.tree),
         frozenset(load_negatives(cfg.negatives_path)),
-        media if media.is_dir() else None,
+        pages_dir.parent / "media",
+        snapshot.parent / THUMBNAILS_DIR,
         cfg.tree,
         cfg.gramps_url,
         pages_dir,
@@ -229,10 +230,10 @@ def _union_lines(union: dict) -> list[str]:
     return lines
 
 
-def _existing_media_lines(titles: list[str]) -> list[str]:
-    if not titles:
+def _existing_media_lines(held: list[dict]) -> list[str]:
+    if not held:
         return ["No photos in Gramps."]
-    return [f"Already in Gramps: {', '.join(titles)}"]
+    return [f"Already in Gramps: {', '.join(m['title'] for m in held)}"]
 
 
 def value_lines(value) -> list[str]:
@@ -366,6 +367,17 @@ def _photo(review: Review, change: Change) -> str | None:
     return None
 
 
+def _mine_photos(review: Review, change: Change) -> list[dict]:
+    held = change.mine.get("existing", []) if change.field == "media" else []
+    if review.thumbnails_dir is None:
+        return []
+    return [
+        {"url": f"/thumbnails/{m['handle']}.jpg", "alt": m["title"]}
+        for m in held
+        if (review.thumbnails_dir / f"{m['handle']}.jpg").is_file()
+    ]
+
+
 def _decision_view(decision: Decision | None) -> dict | None:
     return {"status": decision.status, "value": decision.value} if decision else None
 
@@ -431,6 +443,7 @@ def row_view(
     places: dict[str, str],
 ) -> dict:
     kind = editable_kind(change)
+    photo = _photo(review, change)
     decision = decisions.get(change.id)
     edited = decision.value if decision and decision.status == EDITED else None
     return {
@@ -449,7 +462,9 @@ def row_view(
         "edit_seed": edit_seed(change, kind) if kind else None,
         "edit_lines": edit_lines(kind, edited) if edited is not None else None,
         "decision": _decision_view(decision),
-        "photo": _photo(review, change),
+        "photo": photo,
+        "photo_missing": change.field == "media" and photo is None,
+        "mine_photos": _mine_photos(review, change),
     }
 
 
@@ -547,6 +562,9 @@ def people_view(
                     )
                     for c in links.get(key, [])
                 ],
+                "photos_missing": sum(
+                    1 for r in rows if r["photo_missing"] and not r["decision"]
+                ),
                 "actionable": len(actionable),
                 "decided": sum(1 for r in actionable if r["decision"]),
             }
