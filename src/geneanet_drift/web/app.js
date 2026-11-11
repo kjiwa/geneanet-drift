@@ -273,9 +273,30 @@ function groupSection(group, people) {
     h("summary", { "data-focus": `group:${group.state}`, text: `${group.title} (${count})` }), body);
 }
 
+function photoItem(person) {
+  return h("li", {}, h("a", { class: "person-link", href: `#/person/${person.key}` },
+    h("span", { text: person.name }),
+    h("span", { class: "meta", text: `${plural(person.photos_missing, "photo", "photos")} not saved` })),
+  h("p", { class: "links" }, openLink(person.his_url, "Open in Geneanet")));
+}
+
+function photosSection(people) {
+  const waiting = people.filter((p) => p.photos_missing > 0);
+  if (!waiting.length) return null;
+  const shown = waiting.filter(matchesQuery);
+  const count = shown.length !== waiting.length ? `${shown.length} of ${plural(waiting.length, "person", "people")}` : plural(waiting.length, "person", "people");
+  const body = shown.length
+    ? h("ul", { class: "people" }, ...shown.map(photoItem))
+    : h("p", { class: "muted", text: "No one here matches the search." });
+  return h("details", { class: "group", open: state.open.photos === true, ontoggle: (event) => { state.open.photos = event.target.open; } },
+    h("summary", { "data-focus": "group:photos", text: `Photos to save (${count})` }),
+    h("p", { class: "muted", text: "Open his page in Geneanet and use Save originals in the extension. Reload the review page afterwards." }), body);
+}
+
 function groupSections() {
   const { people } = state.data;
-  return GROUPS.map((group) => groupSection(group, people.filter((p) => p.state === group.state)));
+  const groups = GROUPS.map((group) => groupSection(group, people.filter((p) => p.state === group.state)));
+  return [...groups, photosSection(people)].filter(Boolean);
 }
 
 function filterGroups() {
@@ -393,8 +414,10 @@ function changeRow(row) {
     h("div", { class: "compare" },
       h("div", { class: "cell" }, h("p", { class: "cell-label", text: "His tree" }), ...lines(row.his, both ? row.mine : [], hisEmpty),
         row.his_place ? h("p", { class: "muted", text: `Gramps place: "${row.his_place}"` }) : null,
-        row.photo ? h("img", { class: "thumb", src: row.photo, alt: row.his[0] || "Captured photo" }) : null),
-      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Gramps" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."))),
+        row.photo ? h("img", { class: "thumb", src: row.photo, alt: row.his[0] || "Captured photo" }) : null,
+        row.photo_missing ? h("p", { class: "muted", text: "Photo not saved. Open his page in Geneanet and use Save originals in the extension." }) : null),
+      h("div", { class: "cell" }, h("p", { class: "cell-label", text: "Gramps" }), ...lines(row.mine, both ? row.his : [], "Not in Gramps."),
+        row.mine_photos.length ? h("div", { class: "thumbs" }, ...row.mine_photos.map((p) => h("img", { class: "thumb", src: p.url, alt: p.alt }))) : null)),
     row.proposed ? h("p", { class: "muted", text: `Gramps would hold: ${row.proposed.join("; ")}` }) : null,
     row.edit_lines ? h("p", { text: `Your edit: ${row.edit_lines.join("; ")}` }) : null,
     row.waiting_on === null ? null : waitingNote(row),
@@ -461,6 +484,29 @@ function placeDatalist() {
   return h("datalist", { id: PLACE_LIST }, ...state.data.place_titles.map((place) => h("option", { value: place.title })));
 }
 
+function neighbours(person) {
+  const sequence = GROUPS.filter((g) => g.state !== "unchanged").flatMap((group) =>
+    state.data.people.filter((p) => p.state === group.state && (p === person || isShown(p))));
+  const index = sequence.indexOf(person);
+  if (index < 0) return null;
+  const group = GROUPS.find((g) => g.state === person.state);
+  const inGroup = sequence.filter((p) => p.state === person.state);
+  return { previous: sequence[index - 1], next: sequence[index + 1], caption: `${group.title}: ${inGroup.indexOf(person) + 1} of ${inGroup.length}` };
+}
+
+function neighbourLink(label, person, slot) {
+  if (!person) return h("span", { class: "nav-slot" });
+  return h("a", { class: "nav-slot", "data-slot": slot, href: `#/person/${person.key}`, text: `${label}: "${person.name}"` });
+}
+
+function personNav(person, label) {
+  const around = neighbours(person);
+  if (!around) return null;
+  return h("nav", { class: "person-nav", "aria-label": label },
+    h("p", { class: "muted", text: around.caption }),
+    h("div", { class: "nav-links" }, neighbourLink("Previous", around.previous, "previous"), neighbourLink("Next", around.next, "next")));
+}
+
 function personView(person) {
   const rows = person.changes;
   const body = rows.length
@@ -469,11 +515,13 @@ function personView(person) {
   return h("div", {},
     placeDatalist(),
     h("a", { class: "back", href: "#/", text: "Back to all people" }),
+    personNav(person, "Other people"),
     h("h1", { tabindex: "-1", text: person.name }),
     personSummary(person),
     h("p", { class: "links" }, openLink(person.his_url, "Open in Geneanet"), person.mine && openLink(person.mine.url, "Open in Gramps")),
     matchSection(person),
-    h("h2", { text: changeCount(person) }), ...body);
+    h("h2", { text: changeCount(person) }), ...body,
+    personNav(person, "Other people, end of page"));
 }
 
 function missingPersonView() {

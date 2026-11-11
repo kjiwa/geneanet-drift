@@ -16,6 +16,7 @@ from geneanet_drift.gramps import (
 )
 
 FORMAT = 3
+THUMBNAILS_DIR = "thumbnails"
 
 
 def _date(raw: dict | None) -> GrampsDate | None:

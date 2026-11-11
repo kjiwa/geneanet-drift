@@ -32,6 +32,7 @@ from geneanet_drift.gramps import (
     GrampsClient,
     GrampsError,
     GrampsWriter,
+    save_thumbnails,
     take_references,
     take_tree,
 )
@@ -43,7 +44,7 @@ from geneanet_drift.status import (
     load_change_log,
     pages_to_visit,
 )
-from geneanet_drift.tree_file import write_tree
+from geneanet_drift.tree_file import THUMBNAILS_DIR, write_tree
 
 PAGES_PARENT = Path("Downloads") / "geneanet-drift"
 
@@ -185,6 +186,7 @@ def apply_decisions(
             source_title(cfg.tree),
             frozenset(negatives),
             None,
+            None,
             cfg.tree,
             cfg.gramps_url,
             pages,
@@ -249,6 +251,10 @@ def snapshot_tree(cfg: Config, out: Path, ask_secret: AskSecret, say: Say) -> in
         say(f"Warning: {warning}.")
     write_tree(out, tree)
     say(f"Wrote {len(tree.people)} people, {len(tree.families)} families to {out}.")
+    folder = out.parent / THUMBNAILS_DIR
+    folder.mkdir(mode=0o700, exist_ok=True)
+    saved, failed = save_thumbnails(client, tree, folder)
+    say(f"Thumbnails: {saved} saved, {failed} failed, in {folder}.")
     return 0
 
 

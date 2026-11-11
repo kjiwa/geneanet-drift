@@ -553,7 +553,12 @@ def test_a_media_change_carries_the_titles_of_the_photos_gramps_holds():
         GrampsMedia("m2", "", "scans/letter.png", "image/png"),
     )
     change = only(diff_one(person, gramps("g1", "Rowan", "Ashby", media=held)), "media")
-    assert change.mine == {"existing": ["Wedding portrait", "letter.png"]}
+    assert change.mine == {
+        "existing": [
+            {"title": "Wedding portrait", "handle": "m1"},
+            {"title": "letter.png", "handle": "m2"},
+        ]
+    }
     assert (
         change.id == only(diff_one(person, gramps("g1", "Rowan", "Ashby")), "media").id
     )

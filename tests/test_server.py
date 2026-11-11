@@ -1,6 +1,7 @@
 import http.client
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from geneanet_drift.decisions import (
     load_decisions,
     save_decisions,
 )
-from geneanet_drift.gramps import GrampsPlace
+from geneanet_drift.gramps import GrampsMedia, GrampsPlace
 from geneanet_drift.review_data import Review, apply_command, derive, people_view
 from geneanet_drift.server import (
     TOKEN_HEADER,
@@ -42,7 +43,9 @@ from tests.test_review_data import relative_review, waiting_review
 REPO = Path(__file__).parent.parent
 
 
-def synthetic_review(media_dir: Path | None) -> Review:
+def synthetic_review(
+    media_dir: Path | None, thumbnails_dir: Path | None = None
+) -> Review:
     people = his_people(
         his(
             1,
@@ -79,6 +82,7 @@ def synthetic_review(media_dir: Path | None) -> Review:
         SOURCE,
         frozenset(),
         media_dir,
+        thumbnails_dir,
         "example",
         "http://gramps.test/",
         Path("pages"),
@@ -655,3 +659,63 @@ def test_a_refused_status_is_quoted_in_the_error(served):
     )
     assert status == 400
     assert payload["error"] == 'unknown decision status "maybe"'
+
+
+@pytest.fixture
+def thumbnails(tmp_path):
+    folder = tmp_path / "thumbnails"
+    folder.mkdir()
+    (folder / "m1.jpg").write_bytes(b"\xff\xd8thumb")
+    (folder / "m9.jpg").write_bytes(b"\xff\xd8stranger")
+    (tmp_path / "secret.jpg").write_bytes(b"private")
+    return folder
+
+
+@pytest.fixture
+def served_thumbnails(tmp_path, thumbnails):
+    cfg = Config("example", "http://gramps.test", tmp_path / "data", tmp_path)
+    cfg.data_dir.mkdir()
+    review = synthetic_review(None, thumbnails)
+    held = GrampsMedia("m1", "Portrait", "a.jpg", "image/jpeg")
+    people = tuple(
+        replace(p, media=(held,)) if p.handle == "h1" else p for p in review.tree.people
+    )
+    review = replace(review, tree=replace(review.tree, people=people))
+    server = make_server(cfg, review, 0)
+    app = server.RequestHandlerClass.app
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    yield Client(server, app.token)
+    server.shutdown()
+    server.server_close()
+
+
+def test_a_saved_gramps_thumbnail_is_served(served_thumbnails):
+    response, raw = served_thumbnails.request("GET", "/thumbnails/m1.jpg", token=False)
+    assert (response.status, raw) == (200, b"\xff\xd8thumb")
+    assert response.getheader("Content-Type") == "image/jpeg"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/thumbnails/m9.jpg",
+        "/thumbnails/m2.jpg",
+        "/thumbnails/../secret.jpg",
+        "/thumbnails/..%2fsecret.jpg",
+        "/thumbnails/m1.png",
+        "/thumbnails/m1.jpg/x",
+        "/thumbnails/",
+    ],
+)
+def test_thumbnails_refuse_unknown_handles_and_traversal(served_thumbnails, path):
+    response, _ = served_thumbnails.request("GET", path, token=False)
+    assert response.status == 404
+
+
+def test_thumbnails_are_not_served_without_a_folder(served):
+    client, _, _ = served
+    response, _ = client.request("GET", "/thumbnails/m1.jpg", token=False)
+    assert response.status == 404

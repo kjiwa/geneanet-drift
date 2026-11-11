@@ -32,6 +32,7 @@ from geneanet_drift.gedcom import media_path
 from geneanet_drift.gramps import (
     GrampsClient,
     GrampsWriter,
+    save_thumbnails,
     take_references,
     take_tree,
     urllib_transport,
@@ -285,6 +286,13 @@ def test_the_written_facts_carry_citations_and_files(world, reader):
         by_name["Tobin Pellow"].handle,
         by_name["Quill Hartnoll"].handle,
     }
+
+
+def test_a_thumbnail_of_an_uploaded_image_is_jpeg_bytes(world, reader, tmp_path):
+    after = take_tree(reader)
+    assert save_thumbnails(reader, after, tmp_path) == (1, 0)
+    (saved,) = tmp_path.iterdir()
+    assert saved.read_bytes().startswith(b"\xff\xd8")
 
 
 def test_a_rerun_is_a_no_op(world, writer, recorder, reader):

@@ -1,10 +1,12 @@
 import base64
 import json
+import os
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlencode
 
 from geneanet_drift.feed import name_key
@@ -12,6 +14,7 @@ from geneanet_drift.feed import name_key
 PAGE_SIZE = 500
 TOKEN_INTERVAL = 1.1  # the token endpoint allows one request per second
 REQUEST_TIMEOUT = 30
+THUMBNAIL_SIZE = 256
 
 Transport = Callable[
     [str, str, dict[str, str], bytes | None], tuple[int, dict[str, str], bytes]
@@ -542,6 +545,31 @@ def take_tree(client: GrampsClient) -> GrampsTree:
         tuple(_family(raw, events) for raw in client.get_all("/api/families/")),
         tuple(GrampsPlace(h, _place_title(h, places)) for h in places),
     )
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
+
+
+def save_thumbnails(
+    client: GrampsClient, tree: GrampsTree, directory: Path
+) -> tuple[int, int]:
+    """Saves one thumbnail per image the people hold; a fetch the server refuses is counted; an unreachable server aborts."""
+    handles = sorted(
+        {m.handle for p in tree.people for m in p.media if m.mime.startswith("image/")}
+    )
+    saved = failed = 0
+    for handle in handles:
+        try:
+            data = client.fetch(f"/api/media/{handle}/thumbnail/{THUMBNAIL_SIZE}")
+        except HttpError:
+            failed += 1
+            continue
+        _write_private(directory / f"{handle}.jpg", data)
+        saved += 1
+    return saved, failed
 
 
 @dataclass(frozen=True)

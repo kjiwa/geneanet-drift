@@ -113,11 +113,13 @@ Run these in order. `DIR` is the capture folder, by default
    English, select-all, paste into a plain-text file) instead of the saved
    page.
 2. Snapshot. `geneanet-drift snapshot --out FILE` saves the Gramps tree (read
-   user) to a JSON file outside this repository.
+   user) to a JSON file outside this repository, and one thumbnail of each image
+   its people hold to `thumbnails/` beside it, for the review page.
 3. Review. `geneanet-drift review --pages DIR --snapshot FILE [--port N]` serves
    the review page on `127.0.0.1` (default: a free port) and prints its URL.
-   Decisions are saved to `decisions.json`, so a review can span sittings. See
-   Review page below.
+   Decisions are saved to `decisions.json`, so a review can span sittings. His
+   photos show once the extension's Save originals has run on his page; the list
+   page names the people still waiting. See Review page below.
 4. Apply. `geneanet-drift apply --pages DIR` builds a plan from the accepted
    decisions, prints it (the dry run is always shown), and writes it only after
    you type the confirmation. Before any write it saves a Gramps XML backup to

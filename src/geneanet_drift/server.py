@@ -195,6 +195,15 @@ class App:
             return path
         return None
 
+    def thumbnail_path(self, name: str) -> Path | None:
+        root = self.review.thumbnails_dir
+        handle, dot, suffix = name.rpartition(".")
+        held = {m.handle for p in self.review.tree.people for m in p.media}
+        if root is None or suffix != "jpg" or not dot or handle not in held:
+            return None
+        path = root / name
+        return path if path.is_file() else None
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "geneanet-drift"
@@ -276,6 +285,13 @@ class Handler(BaseHTTPRequestHandler):
         kind = mimetypes.guess_type(found.name)[0] or "application/octet-stream"
         self._send(HTTPStatus.OK, found.read_bytes(), kind)
 
+    def _thumbnail(self, path: str) -> None:
+        parts = path.split("/")
+        found = self.app.thumbnail_path(parts[2]) if len(parts) == 3 else None
+        if found is None:
+            raise RequestError(HTTPStatus.NOT_FOUND, "not found")
+        self._send(HTTPStatus.OK, found.read_bytes(), "image/jpeg")
+
     def _route(self, method: str) -> None:
         try:
             if not self._host_ok():
@@ -287,6 +303,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "read only")
             elif path.startswith("/media/"):
                 self._media(path)
+            elif path.startswith("/thumbnails/"):
+                self._thumbnail(path)
             else:
                 self._static(path)
         except RequestError as error:

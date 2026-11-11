@@ -65,7 +65,9 @@ def test_snapshot_writes_the_tree_with_the_read_client(
     out = tmp_path / "tree.json"
     assert snapshot_tree(cfg, out, input, said.append) == 0
     assert len(read_tree(out).people) == 5
-    assert said[-1].startswith("Wrote 5 people, 3 families")
+    assert said[0].startswith("Wrote 5 people, 3 families")
+    assert said[-1].startswith("Thumbnails: 1 saved, 0 failed")
+    assert (tmp_path / "thumbnails" / "m1.jpg").read_bytes() == b"\xff\xd8thumbnail"
 
 
 def test_snapshot_refuses_a_path_inside_the_repository(cfg, tree_client, monkeypatch):

@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -198,3 +199,26 @@ def test_undo_rejects_a_step_count_below_one_at_parsing(last, capsys):
         main(["undo", "--last", last])
     assert raised.value.code == 2
     assert "--last" in capsys.readouterr().err
+
+
+def test_snapshot_saves_thumbnails_beside_the_snapshot_and_reports_both_counts(
+    cfg, tmp_path, monkeypatch
+):
+    from geneanet_drift import wizard
+
+    seen = []
+    monkeypatch.setattr(
+        wizard, "_connect", lambda *_: SimpleNamespace(role_warnings=list)
+    )
+    monkeypatch.setattr(wizard, "take_tree", lambda client: tree([]))
+    monkeypatch.setattr(
+        wizard,
+        "save_thumbnails",
+        lambda client, found, folder: seen.append(folder) or (3, 1),
+    )
+    out = tmp_path / "tree.json"
+    said: list[str] = []
+    assert wizard.snapshot_tree(cfg, out, None, said.append) == 0
+    assert seen == [tmp_path / "thumbnails"]
+    assert (tmp_path / "thumbnails").is_dir()
+    assert any("3 saved, 1 failed" in line for line in said)

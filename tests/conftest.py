@@ -58,7 +58,9 @@ class FakeGramps:
             start = (int(query["page"][0]) - 1) * size
             response_headers["x-total-count"] = str(len(payload))
             payload = payload[start : start + size]
-        return 200, response_headers, json.dumps(payload).encode()
+        if not isinstance(payload, bytes):
+            payload = json.dumps(payload).encode()
+        return 200, response_headers, payload
 
 
 @pytest.fixture
@@ -93,6 +95,7 @@ def tree_client(fake_gramps: FakeGramps) -> GrampsClient:
         "media",
     ):
         fake_gramps.routes[f"/api/{kind}/"] = load_fixture(f"tree_{kind}.json")
+    fake_gramps.routes["/api/media/m1/thumbnail/256"] = b"\xff\xd8thumbnail"
     return make_client(fake_gramps)
 
 
